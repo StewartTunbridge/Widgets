@@ -1,0 +1,139 @@
+WIDGETS
+=======
+
+This is a Target independent Widgets library based on a targeted WidgetDriver.
+
+WidgetsDriver*.cpp: Provides the targeted fundumentals for everything else
+WidgetsText.cpp: Provides Font rendering and sizing
+WidgetsImages.cpp: Loads and Saves various image file types 
+Widgets.cpp: Provides Forms each containing a tree of Containers
+WidgetsControls*.cpp: Various Controls inherited from a Container
+
+All Windows are a _Form.
+This includes a _Container covering the entire _Form area.
+Every _Container can contain children _Container(s). Thus a tree.
+All Widgets are descended (ultimately) from a _Container.
+???If the WidgetsDriver supports _Texture, each Container includes one
+???Either _Containers draw to the Window or their _Texture for later rendering
+A _Bitmap loads, processes & displays images
+A _Font makes, measures and displays text
+A _Texture (if supported by WidgetDriver*) buffers each Widgets contents
+
+_Form: elements
+
+_Form *Next;   // Next _Form in the list (see FormList)
+_Container *Container;   // The Container that contains all others
+_Container *KeyFocus;   // The Container in keyboard focus
+_Container *EventLock;   // The Container that temporarily gets all events
+_Texture *WindowTexture;   // Texture for Double Buffering
+char KeyPress;   // Keyboard input from and soft keyboards (0 = none)
+bool CopyImage;   // True schedules a screen capture
+bool ReRender;   // True schedules a Rendering of any Containers that need it
+byte Alpha;
+// Create Form
+_Form (char *Title, int SizeX, int SizeY, int PosX = -1, int PosY = -1, byte WindowAttribute = 0);
+Specify Location, Size and Attributes:
+  #define waResizable 0x01
+  #define waBorderless 0x02
+  #define waAlwaysOnTop 0x04
+  #define waFullScreen 0x08
+// Manually destroy Form (also happens on window close)
+virtual ~_Form (void);
+void Clear (void);
+bool SaveScreenShot (char *Filename);
+
+_Form related:
+
+// Linked list of all Forms
+_Form FormList
+// Look for events, processes everything, draw & render whats needed, deletes closing windows
+extern bool ProcessEvent (void);
+
+
+
+_Container:
+
+_Container *Next;
+byte Alpha;   // Alpha blend this component (not universally supported)
+_Point TextMeasure (char *Text);   // Size of Text in current _Font
+_Form *Form;   // _Form associated with this _Container
+_Container *Parent;   // Immediate Owner
+_Rect Rect;   // Dimensions relative to the Parent
+byte RectLock;   // Adjust container automagically on Parent resize. See rl*
+  #define rlTop     0x01   // TRUE if Top is locked to Parent Bottom
+  #define rlBottom  0x02   // TRUE if Bottom "
+  #define rlLeft    0x04   // TRUE if Left is locked to Parent Right
+  #define rlRight   0x08   // TRUE if Right "
+_Container *Children;   // Linked list of descendent Containers
+int Colour, ColourGrad;   // Background colour (-1 transparent). set ColourGrad for vertically graded colour
+int ColourFont;   // Font render colour. -1 => Parent.FontColour (recursive)
+// Auto paging of Containers within this container
+int PagingTime;   // Time between changes (mS)
+int PagingTransitionTime;   // Time for the transition (mS)
+_PagingTransitionMode PagingTransitionMode;   // How to Transition: {ptmBlend, ptmSlide, ptmDrop, ptmRandom}
+// General data for whatever
+_Container *DataContainer;   // a pointer to _Container or anything else
+int DataInt;
+// Create Container:
+_Container (_Container *Parent_, _Rect Rect_, char *Text_ = NULL, int PagingTime_ = 0, int PagingTransitionTime_ = 0, _PagingTransitionMode PagingTransitionMode_ = ptmBlend);
+  // Parent: Who contains this Container
+  // Rect_: Position (rel to Parent. Width/Height of 0 => use Parent dimention
+  // Text: Multi purpose string. Text in Label/Button. Filename. Format specifier ...
+virtual ~_Container (void);   // delete Container
+bool Resize (int Width, int Height);   // Changes Container dimention: This makes adjustments recursively to descendents according to RectLock
+char* TextGet (void);   // Get the Container's Text
+void TextSet (char *St);   // Set the Container's Text
+void Invalidate (bool ReDraw);   // Rerender and optionally Redraw
+void InvalidateAll (void);   // Redraw self & everything inside
+void PollActiveSet (void);   // Tell the Form that this Component needs to be Polled regularly
+bool IsVisible (void);
+bool VisibleSet (bool Value);   // True if this (and children) are displayed
+bool IsEnabled (void);
+void EnabledSet (bool Enabled_);   // True if this (") operate, else dulled out
+//
+bool FontSet (char *FontFile, int Size, byte Style = 0x00);   // Select typeface, size & style (see fs*)
+  This will be used by descendents unless they have FontSet
+  Styles:
+  #define fsNone 0x00
+  #define fsBold 0x01
+  #define fsItalic 0x02
+  #define fsUnderline 0x04
+  #define fsOutline 0x08
+  #define fsShadow 0x10
+
+// Funtions to help make new components
+int ColourFind (void);   // Find the background colour (up the tree)
+int ColourFontFind (void);   // Find the Font colour (")
+_Typeface *FontFind (byte *FontStyle);   // Find a Font (")
+//
+void TextOutAligned (_Rect Rect, char *Text, _Align Align, int Colour_);   // Find Font, Draw Text at Rect aligned by Align
+??void TextOutWrap_ (_Rect Rect, char *Text, _Align Align, int Colour_, int *PosY, bool Write);   // TextOut multiline wordwrapped. '\n'=NewLine '\t'=Split
+void TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert, int Colour);
+void DrawBorder (_Rect Rect, _Border Border, int ColourReference, int Indent);
+void DrawBorder (_Border Border, int Indent);
+void DrawBezel (int Width);
+void DrawCursor (int x, int y, int Height);
+void DrawLine (int x1, int y1, int x2, int y2, int Colour, int Width = 1);
+void DrawRectangle (_Rect Rect_, int ColourEdgeTL, int ColourEdgeBR, int ColourFill);
+void FillGradient (int Colour1, int Colour2);
+void FillGradientRound (int Colour1, int Colour2, int ColourEdge);
+void DrawArrow (_Rect Rect_, _Direction Direction);   // Arrow: Direction: Left, Up, Right, Down
+void DrawCircle (int cx, int cy, int radius, int ColourEdge, int ColourFill = -1, int Width = 1, int Bevel = 0);
+void DrawRadius (int x, int y, int Rad1, int Rad2, int Angle, int Colour, int Width);
+void DrawScrollBar (int Pos1, int Pos2, int SizeContent);
+//
+void Draw (int XOffset, int YOffset);
+virtual void DrawCustom (void);   // Implemented by descendants
+void Render1 (bool RenderAll, int DestX, int DestY, byte AlphaOffset);
+void Render2 (int DestX, int DestY);
+//
+void CheckFocus (_Event *Event, int OffsetX, int OffsetY);   // Yield or Obtain Focus according to Event
+bool ProcessEvent (_Event *Event, int OffsetX, int OffsetY);   // returns true when actioned
+virtual bool ProcessEventCustom (_Event *Event, int OffsetX, int OffsetY);   // Implemented by descendants
+void Poll (void);
+virtual void PollCustom (void);
+//
+bool IsEventMine (_Event *Event, int OffsetX, int OffsetY);   // Is this event inside me
+
+
+AVAILABLE COMPONENTS:

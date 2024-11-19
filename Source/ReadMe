@@ -1,0 +1,17 @@
+=============
+USING MIDGETS
+=============
+
+Install the XLib library / header files
+  sudo apt install libx11-dev
+
+Install FreeType2
+  ? -dev
+
+
+
+TO BE DONE
+-Finish save image functions
+-Fix crash at end
+-Improve Text Rendering
+
