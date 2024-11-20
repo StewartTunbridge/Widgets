@@ -1,139 +1,237 @@
-WIDGETS (this is currently being worked on)
+WIDGETS
 =======
 
-This is a Target independent Widgets library based on a targeted WidgetDriver.
+Intro
+-----
+Widgets is a multi-platform library for rapidly creating GUI apps.
+Targets currently include Linux (X), Windows and SDL.
 
-WidgetsDriver*.cpp: Provides the targeted fundumentals for everything else
-WidgetsText.cpp: Provides Font rendering and sizing
-WidgetsImages.cpp: Loads and Saves various image file types 
-Widgets.cpp: Provides Forms each containing a tree of Containers
-WidgetsControls*.cpp: Various Controls inherited from a Container
-
-All Windows are a _Form.
-This includes a _Container covering the entire _Form area.
-Every _Container can contain children _Container(s). Thus a tree.
+Windows & Widgets
+-----------------
+To make a new window, create a _Form.
+A _Form includes a _Container covering the entire _Form area.
+Every _Container can contain children _Container(s) and will have a parent _Container
+  (except the _Form's root _Container), making a tree.
+_Containers look after themselves after being created, performing all drawing and user 
+  interactions without help from the app.
 All Widgets are descended (ultimately) from a _Container.
-???If the WidgetsDriver supports _Texture, each Container includes one
-???Either _Containers draw to the Window or their _Texture for later rendering
-A _Bitmap loads, processes & displays images
-A _Font makes, measures and displays text
-A _Texture (if supported by WidgetDriver*) buffers each Widgets contents
+All Widgets are created inside a _Container.
+Coordinates are relative to the Parent _Container.
+All _Containers can optionally have: a Text string, a _Font, a _Bitmap and Colours.
+These resources are available to Children _Containers.
 
-_Form: elements
+Example, Create a window: 
+  _Form *Main = new _Form ("Title", {10, 10, 600, 400}, waResizable);
 
-_Form *Next;   // Next _Form in the list (see FormList)
-_Container *Container;   // The Container that contains all others
-_Container *KeyFocus;   // The Container in keyboard focus
-_Container *EventLock;   // The Container that temporarily gets all events
-_Texture *WindowTexture;   // Texture for Double Buffering
-char KeyPress;   // Keyboard input from and soft keyboards (0 = none)
-bool CopyImage;   // True schedules a screen capture
-bool ReRender;   // True schedules a Rendering of any Containers that need it
-byte Alpha;
-// Create Form
-_Form (char *Title, int SizeX, int SizeY, int PosX = -1, int PosY = -1, byte WindowAttribute = 0);
-Specify Location, Size and Attributes:
+Example, Add a Button to the _Form:
+  _Button *bClose = new _Button (Main->Container, {4, 4, 64, 128}, "Close", AcnClose);
+  The specified action function (AcnClose) must exist: Example
+    void AcnClose (_Container *Container)
+      {
+        _Button *b = (_Button *) Container;
+        if (!b->Down)
+          Exit = true;
+      }
+
+_Containers can have many of their values changed or methods called after creation.
+Example, change Colours:
+  b->Colour = bBlue; b->ColourGrad = ColourAdjust (cBlue, 50);
+  b->Invalidate (true);
+Example, change Font, Text:
+  b->FontSet ("../ARI.ttf", 24, fsOutline); b->TextSet ("Some Message");
+Example, change Visibility:
+  cTools1->VisibleSet (false); cTools2->VisibleSet (true);
+
+Main Programme
+--------------
+The app must provide a main_ (arg, argv) function:
+  int main_ (int argc, char *argv [])
+    {
+      <<initialize, make main _Form ...>>
+      while (FormsUpdate ())   // this is the main loop
+        {
+          <<do stuff>>
+          sleep ();
+        }
+      // Finished - Delete the Forms
+      while (FormsList)
+        delete (FormsList);
+    }
+
+Main Modules
+------------
+WidgetsDriver*.cpp: Provide the targeted fundumentals
+  This is all of the OS and hardware dependent code.
+  To add a target, implement WidgetDriver.hpp in a new cpp file
+Widgets.cpp: Implements _Form, _Container and all the basic Widgets
+WidgetsText.cpp: Implements Font rendering, Sizing and Styles
+  This relies on freetype
+WidgetsImages.cpp: Loads and Saves various image file types in/from _Bitmap
+  BMP support is native. Other formats rely on libpng and libjpeg
+WidgetsEdit.cpp: Implements Single & Multi line Edit Boxes
+WidgetGrid.cpp: Implements a versatile spreadsheet-like grid
+WidgetTree.cpp: Implements a versatile tree structure
+
+
+WIDGETS REFERENCE
+=================
+
+_Form
+-----
+_Form (char *Title, _Rect Position, byte WindowAttribute = 0);   // Create Form
   #define waResizable 0x01
   #define waBorderless 0x02
   #define waAlwaysOnTop 0x04
   #define waFullScreen 0x08
-// Manually destroy Form (also happens on window close)
-virtual ~_Form (void);
+  #define waModal 0x10
+_Container *Container;
+_Container *KeyFocus;
+_Container *EventLock;
+char KeyPress;   // Keyboard input from soft keyboards (0 = none)
+byte Alpha;
+byte WindowAttributes;
+_FormEventPreview EventPreview;
 void Clear (void);
 bool SaveScreenShot (char *Filename);
-
-_Form related:
-
-// Linked list of all Forms
-_Form FormList
-// Look for events, processes everything, draw & render whats needed, deletes closing windows
-extern bool ProcessEvent (void);
+void Die (void);  or just delete me
 
 
+_Container
+----------
+_Container (_Container *Parent_, _Rect Rect_, char *Text_ = NULL);   // make me
+  Rect_: x/y: Position relative to Parent. Width/Height: To use Parent size specify 0
+  void Die (void);
+    This is how you delete yourself while still in your own method
 
-_Container:
+Resources:
+  char* TextGet (void);   // Get the Container's Text
+  void TextSet (char *St);   // Set the Container's Text
+  _Bitmap *Bitmap;
+  _Bitmap* BitmapFind (void);
+  int Colour, ColourGrad;   // Colours (-1 transparent). set Grad for graded colour
+  int ColourFind (void);
+  int ColourText;
+  int ColourTextFind (void);
+  bool FontSet (char *FontFile, int Size, byte Style = 0x00);
+  _Font* FontFind (void);
 
-_Container *Next;
-byte Alpha;   // Alpha blend this component (not universally supported)
-_Point TextMeasure (char *Text);   // Size of Text in current _Font
-_Form *Form;   // _Form associated with this _Container
-_Container *Parent;   // Immediate Owner
-_Rect Rect;   // Dimensions relative to the Parent
-byte RectLock;   // Adjust container automagically on Parent resize. See rl*
-  #define rlTop     0x01   // TRUE if Top is locked to Parent Bottom
-  #define rlBottom  0x02   // TRUE if Bottom "
-  #define rlLeft    0x04   // TRUE if Left is locked to Parent Right
-  #define rlRight   0x08   // TRUE if Right "
-_Container *Children;   // Linked list of descendent Containers
-int Colour, ColourGrad;   // Background colour (-1 transparent). set ColourGrad for vertically graded colour
-int ColourFont;   // Font render colour. -1 => Parent.FontColour (recursive)
-// Auto paging of Containers within this container
-int PagingTime;   // Time between changes (mS)
-int PagingTransitionTime;   // Time for the transition (mS)
-_PagingTransitionMode PagingTransitionMode;   // How to Transition: {ptmBlend, ptmSlide, ptmDrop, ptmRandom}
-// General data for whatever
-_Container *DataContainer;   // a pointer to _Container or anything else
-int DataInt;
-// Create Container:
-_Container (_Container *Parent_, _Rect Rect_, char *Text_ = NULL, int PagingTime_ = 0, int PagingTransitionTime_ = 0, _PagingTransitionMode PagingTransitionMode_ = ptmBlend);
-  // Parent: Who contains this Container
-  // Rect_: Position (rel to Parent. Width/Height of 0 => use Parent dimention
-  // Text: Multi purpose string. Text in Label/Button. Filename. Format specifier ...
-virtual ~_Container (void);   // delete Container
-bool Resize (int Width, int Height);   // Changes Container dimention: This makes adjustments recursively to descendents according to RectLock
-char* TextGet (void);   // Get the Container's Text
-void TextSet (char *St);   // Set the Container's Text
-void Invalidate (bool ReDraw);   // Rerender and optionally Redraw
-void InvalidateAll (void);   // Redraw self & everything inside
-void PollActiveSet (void);   // Tell the Form that this Component needs to be Polled regularly
-bool IsVisible (void);
-bool VisibleSet (bool Value);   // True if this (and children) are displayed
-bool IsEnabled (void);
-void EnabledSet (bool Enabled_);   // True if this (") operate, else dulled out
-//
-bool FontSet (char *FontFile, int Size, byte Style = 0x00);   // Select typeface, size & style (see fs*)
-  This will be used by descendents unless they have FontSet
-  Styles:
-  #define fsNone 0x00
-  #define fsBold 0x01
-  #define fsItalic 0x02
-  #define fsUnderline 0x04
-  #define fsOutline 0x08
-  #define fsShadow 0x10
+Who/Where am I:
+  _Rect Rect;   // Dimensions relative to Parent
+  _Container *Parent;   // Owner
+  _Container *Children;
+  _Form *Form;   // _Form associated with me
+  byte RectLock;   // Adjust container automagically on Parent resize. See rl*
+    #define rlTop     0x01   // TRUE if Top is locked to Parent Bottom
+    #define rlBottom  0x02   // TRUE if Bottom "
+    #define rlLeft    0x04   // TRUE if Left is locked to Parent Right
+    #define rlRight   0x08   // TRUE if Right "
 
-// Funtions to help make new components
-int ColourFind (void);   // Find the background colour (up the tree)
-int ColourFontFind (void);   // Find the Font colour (")
-_Typeface *FontFind (byte *FontStyle);   // Find a Font (")
-//
-void TextOutAligned (_Rect Rect, char *Text, _Align Align, int Colour_);   // Find Font, Draw Text at Rect aligned by Align
-??void TextOutWrap_ (_Rect Rect, char *Text, _Align Align, int Colour_, int *PosY, bool Write);   // TextOut multiline wordwrapped. '\n'=NewLine '\t'=Split
-void TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert, int Colour);
-void DrawBorder (_Rect Rect, _Border Border, int ColourReference, int Indent);
-void DrawBorder (_Border Border, int Indent);
-void DrawBezel (int Width);
-void DrawCursor (int x, int y, int Height);
-void DrawLine (int x1, int y1, int x2, int y2, int Colour, int Width = 1);
-void DrawRectangle (_Rect Rect_, int ColourEdgeTL, int ColourEdgeBR, int ColourFill);
-void FillGradient (int Colour1, int Colour2);
-void FillGradientRound (int Colour1, int Colour2, int ColourEdge);
-void DrawArrow (_Rect Rect_, _Direction Direction);   // Arrow: Direction: Left, Up, Right, Down
-void DrawCircle (int cx, int cy, int radius, int ColourEdge, int ColourFill = -1, int Width = 1, int Bevel = 0);
-void DrawRadius (int x, int y, int Rad1, int Rad2, int Angle, int Colour, int Width);
-void DrawScrollBar (int Pos1, int Pos2, int SizeContent);
-//
-void Draw (int XOffset, int YOffset);
-virtual void DrawCustom (void);   // Implemented by descendants
-void Render1 (bool RenderAll, int DestX, int DestY, byte AlphaOffset);
-void Render2 (int DestX, int DestY);
-//
-void CheckFocus (_Event *Event, int OffsetX, int OffsetY);   // Yield or Obtain Focus according to Event
-bool ProcessEvent (_Event *Event, int OffsetX, int OffsetY);   // returns true when actioned
-virtual bool ProcessEventCustom (_Event *Event, int OffsetX, int OffsetY);   // Implemented by descendants
-void Poll (void);
-virtual void PollCustom (void);
-//
-bool IsEventMine (_Event *Event, int OffsetX, int OffsetY);   // Is this event inside me
+General Data Places: just for you
+  _Container *DataContainer;   // a pointer to _Container or anything else
+  int DataInt;
+
+Drawing:
+  int BorderColourTL (int ColourReference);
+  int BorderColourBR (int ColourReference);
+  void DrawBorder (_Rect Rect, _Border Border, int ColourReference, int Indent = 0);
+  void DrawBorder (_Border Border, int Indent);
+  void DrawBezel (int Width);
+  void DrawTab (_Rect Rec, int Colour, int ColourBG, bool Selected);
+  void DrawLine (int x1, int y1, int x2, int y2, int Colour, int Width = 1);
+  void DrawRectangle (_Rect Rect_, int ColourEdgeTL, int ColourEdgeBR, int ColourFill);
+  void FillGradient (_Rect Rect, int Colour1, int Colour2);
+  void DrawBitmap (_Bitmap *Bitmap, _Rect rSrc, _Rect rDest, bool Transparent);
+  void DrawBackground (_Rect Rect);
+  void DrawArrow (_Rect Rect_, _Direction Direction);   // Arrow: Direction: Left, Up, Right, Down
+  void DrawCircle (int cx, int cy, int radius, int ColourEdge, int ColourFill = -1, int Width = 1, int Bevel = 0);
+  void DrawRadius (int x, int y, int Rad1, int Rad2, int Angle, int Colour, int Width);
+  void DrawScrollBar (bool Vert, int Bar1, int Bar2);
+  void ScrollBarsDraw (byte Bars, _Point Value, _Point Content);
+  bool ScrollRegionBarsDraw (void);
+
+DrawText:
+  Horizontal and Vertical Text Alignment
+    aLeft, aRight, aCenter    (aLeft = aTop, aRight = aBottom)
+  _Point TextMeasure (_Font *Font, char *Text);
+    If Font is NULL, it will inherit one
+  void TextOutAligned (_Font *Font, _Rect Rect, char *Text, _Align Align, _Align AlignVert);
+    "
+  void TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert);
+  void TextOutWrapReverse (_Rect Rect, char *St, _Align Align, _Point Margin);
+    As above BUT Inverted for Menus etc
+
+State:
+  void Invalidate (bool ReDraw);
+    when you are finished drawing
+  bool IsVisible (void);
+  void VisibleSet (bool Value);
+  bool IsEnabled (void);
+  void EnabledSet (bool Enabled_);
+
+When Making a new Widget:
+  virtual void DrawCustom (void);   // Implemented by descendants
+  virtual bool ProcessEventCustom (_Event *Event, _Point Offset);   // Implemented by descendants
+    bool IsEventWithin (_Event *Event, _Point Offset);   // Is this event inside me
+    bool IsEventMine (_Event *Event, _Point Offset);
+  virtual void PollCustom (void);
+  //
+  bool ScrollBarsEvent (_Event *Event, _Point Offset, byte Bars, _Point Content, _Point *Scroll);
+  _Point SizeVirtual;   // Size for scrollable Containers
+  _Point Scroll;   // Displacement for scrolling regions
+  bool ScrollRegionBarsEvent (_Event *Event, _Point Offset);
+
+_Button
+-------
+_ButtonRadio
+------------
+_CheckBox
+------------
+_ButtonRound
+------------
+_ButtonArrow
+------------
+_ButtonSecret
+-------------
+_Label
+------
+_LabelNumber
+------------
+_LabelMoney
+-----------
+_LabelTime
+----------
+_LabelDateTime
+--------------
+_LabelStrip
+-----------
+_LabelScroll
+------------
+_EditNumber
+-----------
+_Slider
+-------
+_Knob
+-----
+_Wait
+-----
+_Image
+------
+_SelectionList
+--------------
+_Menu
+-----
+_MenuPopup
+----------
+_DropList
+---------
+_Tabs
+-----
+_SoftKeyboard
+-------------
+
+GRIDS
+
+TREES
 
 
-AVAILABLE COMPONENTS:
+==============================================
