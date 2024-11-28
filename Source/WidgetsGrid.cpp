@@ -221,6 +221,7 @@ void _GridView::DrawCustom (void)
     _Rect RectCell;
     int c1, c2;
     int x2;
+    _Font *Font;
     //
     /* char s [80], *ps;
     if (DrawCells0.x >= 0)
@@ -238,6 +239,7 @@ void _GridView::DrawCustom (void)
     ColGrid = ColourAdjust (cForm1, 150);
     ColGridFocus = ColourAdjust (ColourTextFind (), 140);
     ColSelBG = cSelected;
+    Font = FontFind ();
     Posn = {0, 0};
     ScrollBars = 0;
     if (CellOffset.x)
@@ -246,6 +248,7 @@ void _GridView::DrawCustom (void)
       ScrollBars |= sbVert;
     while (true)
       {
+        Font->ColourBG = ColourFind ();
         Ind = CellGridPosnToIndex (Posn);
         RectCell = CellRect (Posn);
         if (Ind.x >= Columns || RectCell.x > Rect.Width)
@@ -271,6 +274,7 @@ void _GridView::DrawCustom (void)
               {
                 DrawRectangle (RectCell, -1, -1, ColLockBG);
                 DrawBorder (RectCell, bRaised, ColLockBG, 0);
+                Font->ColourBG = ColLockBG;
               }
             else
               {
@@ -280,7 +284,10 @@ void _GridView::DrawCustom (void)
                 else
                   {
                     if (CellInSelection (Ind))   // Current multiple selection
-                      DrawRectangle (RectCell, -1, -1, ColSelBG);
+                      {
+                        DrawRectangle (RectCell, -1, -1, ColSelBG);
+                        Font->ColourBG = ColSelBG;
+                      }
                     else if (RenderFlags & rRedrawPart)
                       DrawRectangle (RectCell, -1, -1, ColourFind ());
                     // Grid lines

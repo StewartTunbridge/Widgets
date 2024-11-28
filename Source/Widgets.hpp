@@ -26,7 +26,9 @@ extern void DebugAddR (const char *St, _Rect *r);   // "
 extern _Rect AddMargin (_Rect Rect, _Point Margin);
 
 // FONT ALIGNMENT
-enum _Align {aLeft, aRight, aCenter};   // Horizontal Text Alignment
+enum _Align {aLeft, aRight, aCenter};   // Horizontal & Vertical Text Alignment
+#define aTop aLeft
+#define aBottom aRight
 
 // BUTTON STYLE
 typedef enum {bsNormal, bsFlat, bsSimple} _ButtonStyle;

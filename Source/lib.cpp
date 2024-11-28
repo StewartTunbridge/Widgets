@@ -43,11 +43,13 @@ const unsigned int Bit [32] =
 
 const char *BoolText [2] = {"False", "True"};
 
+/*
 #ifdef _Windows
   char PathChar = '\\';
 #else
   char PathChar = '/';
 #endif
+*/
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -480,10 +482,10 @@ char *StrPos (char *St, const char Target)
       return NULL;
     while (true)
       {
-        if (*St == 0)
-          return NULL;
         if (*St == Target)
           return St;
+        if (*St == 0)
+          return NULL;
         St++;
       }
   }
@@ -1015,6 +1017,28 @@ void StrCat (char **Dest, const char *St, int n)   // Append String length limit
           }
   }
 
+void StrInsert (char *Dest, char Ch)
+  {
+    char c;
+    //
+    if (Ch)
+      while (true)
+        {
+          c = *Dest;
+          *Dest++ = Ch;
+          if (Ch == 0)
+            break;
+          Ch = c;
+        }
+  }
+
+void StrAppend (char *Dest, char Ch)
+  {
+    Dest = StrPos (Dest, (char) 0);
+    *Dest++ = Ch;
+    *Dest = 0;
+  }
+
 // Filenames
 
 char *StrFindFileExtension (char *FileName)
@@ -1032,6 +1056,31 @@ char *StrFindFileExtension (char *FileName)
           FileName++;
         }
     return Res;
+  }
+
+void StrAddExtension (char *Filename, char *Extension)
+  {
+    char *p;
+    //
+    p = StrFindFileExtension (Filename);
+    if (!p)   // no extension
+      {
+        p = Filename;
+        while (*p)
+          p++;
+        StrCat (&p, Extension);
+        *p = 0;
+      }
+  }
+
+void StrForceExtension (char *Filename, char *Extension)
+  {
+    char *p;
+    //
+    p = StrFindFileExtension (Filename);
+    if (p)   // no extension
+      *p = 0;
+    StrAddExtension (Filename, Extension);
   }
 
 
@@ -1682,7 +1731,7 @@ void ForcePath (char *Path)
     do
       {
         strcpy (Path_, Path);
-        x = StrPos (x, PathChar);
+        x = StrPos (x, PathDelimiter);
         if (x == NULL)
           Done = true;
         else
@@ -1699,7 +1748,7 @@ void ForcePath (char *Path)
     free (Path_);   // Memory leak fixed 03 Mar 2015 ****
   }
 
-void GetCurrentPath (char **Path)   // Caller must free Result
+bool GetCurrentPath (char **Path)   // Caller must free Result
   {
     char *p1;
     //
@@ -1712,7 +1761,9 @@ void GetCurrentPath (char **Path)   // Caller must free Result
         #endif // _Windows
           StrAssignCopy (Path, p1);
         free (p1);
+        return true;
       }
+    return false;
   }
 
 bool DirItemFromFilename (char *Filename, _DirItem *Item)
@@ -1792,7 +1843,7 @@ void DirRead (_DirItem **Dir, _ReadDirCallback CallBack)
             de = readdir (dir);
             if (de == NULL)
               break;
-            if (!StrSame (de->d_name, ".") && !StrSame (de->d_name, ".."))
+            if (!StrSame (de->d_name, ".")) // && !StrSame (de->d_name, ".."))
               {
                 if (New == NULL)
                   {
@@ -1822,6 +1873,29 @@ void DirRead (_DirItem **Dir, _ReadDirCallback CallBack)
 
 extern void DebugAdd (const char *St, int Err);
 
+bool CurrentDateTimeToStr (char **St, bool Date, bool Time)
+  {
+    tm DateTime;
+    //
+    if (GetDateTime (&DateTime))
+      {
+        if (Date)
+          {
+            NumToStr (St, DateTime.tm_year + 1900, 4 | DigitsZeros);
+            NumToStr (St, DateTime.tm_mon + 1, 2 | DigitsZeros);
+            NumToStr (St, DateTime.tm_mday, 2 | DigitsZeros);
+          }
+        if (Time)
+          {
+            NumToStr (St, DateTime.tm_hour, 2 | DigitsZeros);
+            NumToStr (St, DateTime.tm_min, 2 | DigitsZeros);
+            NumToStr (St, DateTime.tm_sec, 2 | DigitsZeros);
+          }
+        return true;
+      }
+    return false;
+  }
+
 void Log (char *Filename, char *Line)
   {
     char *Name, *x;
@@ -1833,12 +1907,12 @@ void Log (char *Filename, char *Line)
     StrCat (&x, Filename);
     if (GetDateTime (&DateTime))
       {
-        StrCat (&x, PathChar);
+        StrCat (&x, PathDelimiter);
         NumToStr (&x, DateTime.tm_year, 4 | DigitsZeros);
         NumToStr (&x, DateTime.tm_mon + 1, 2 | DigitsZeros);
         *x = 0;
         ForcePath (Name);
-        StrCat (&x, PathChar);
+        StrCat (&x, PathDelimiter);
         StrCat (&x, Filename);
         NumToStr (&x, DateTime.tm_year, 4 | DigitsZeros);
         NumToStr (&x, DateTime.tm_mon + 1, 2 | DigitsZeros);

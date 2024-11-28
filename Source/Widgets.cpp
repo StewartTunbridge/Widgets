@@ -1437,8 +1437,8 @@ void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, b
         BOW = 0;
         while (St [BOL])
           {
-            if (BOW == BOL)   // Start of line
-              /*if (St [BOL] == '~')   // Change Colour
+            /*if (BOW == BOL)   // Start of line
+              if (St [BOL] == '~')   // Change Colour
                 {
                   Param = &St [BOL + 1];
                   Colour_ = StrGetNumBaseFixed (&Param, 6, 16);
@@ -1465,7 +1465,7 @@ void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, b
             else   // not too wide
               if (St [EOW] != ' ')   // but out of string OR Specified End of Line
                 x = EOW;   // so finish off
-            if (x)   // display a line
+            if (x || (St [EOW] != ' '))   // display a line
               {
                 StSub [x] = 0;
                 if (Write)// && *PosY < Rect_.Height)

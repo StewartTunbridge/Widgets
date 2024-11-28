@@ -156,9 +156,13 @@ extern void StrCat (char **Dest, const char *St);   // Append String
 extern void StrCat (char **Dest, const char Ch);   // Append Char
 extern void StrCat (char **Dest, const char Ch, int n);   // Append Char repeated
 extern void StrCat (char **Dest, const char *St, int n);   // Append String length limited
+extern void StrInsert (char *Dest, const char Ch);
+extern void StrAppend (char *Dest, char Ch);
 
 // Filenames
 extern char *StrFindFileExtension (char *FileName);
+extern void StrAddExtension (char *Filename, char *Extension);
+extern void StrForceExtension (char *Filename, char *Extension);
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -481,10 +485,11 @@ extern longint FileSize (int File);
 extern int FileRead (int File, byte *Data, int DataSize);
 extern bool FileWrite (int File, byte *Data, int DataSize);
 extern void ForcePath (char *Path);
-extern void GetCurrentPath (char **Path);   // Caller must free *Path
+extern bool GetCurrentPath (char **Path);   // Caller must free *Path
 
 extern void StrPathHome (char **St, char *Filename);
 
+extern bool CurrentDateTimeToStr (char **St, bool Date, bool Time);
 extern void Log (char *Filename, char *Line);
 
 /*

@@ -81,7 +81,7 @@ _Point FreeTypeMeasureString (char *St, _Font *Font, int *Index = NULL, int Sear
     St__ = St_ = St;
     x__ = x_ = 0;
     Size = {0, 0};
-    if (Font)
+    if (Font && St)
       {
         Size.y = Font->YAdvance;
         dx = CharWidthAdjustment (Font);

@@ -148,6 +148,10 @@ extern bool WindowIDMatch (_WindowID WindowID, _Window *Window);
 extern char* ClipboardGet (void);   // Read clipboard contents. User must free result
 extern bool ClipboardSet (char *Text);
 
+// Start Thread
+typedef void* (_ThreadFunction) (void *arg);
+bool StartThread (_ThreadFunction ThreadFunction, void *Param);
+
 // Main
 extern int main_ (int argc, char* args []);
 

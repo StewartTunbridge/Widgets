@@ -232,9 +232,17 @@ void _EditCommon::Insert (int Pos, int Size, char *St)
     char *TextNew;
     //
     TextNew = (char *) malloc (TextLen + Size + 1);
-    strncpy (TextNew, Text, Pos);
-    strncpy (&TextNew [Pos], St, Size);
-    strcpy (&TextNew [Pos + Size], &Text [Pos]);
+    if (Text)
+      {
+        strncpy (TextNew, Text, Pos);
+        strncpy (&TextNew [Pos], St, Size);
+        strcpy (&TextNew [Pos + Size], &Text [Pos]);
+      }
+    else
+      {
+        strncpy (TextNew, St, Size);
+        TextNew [Size] = 0;
+      }
     StrAssign (&Text, TextNew);
     TextLen += Size;
     Changed = true;
@@ -261,8 +269,9 @@ int _EditCommon::LineLength ()
     int i;
     //
     i = 0;
-    while ((byte) Text [IndexLine + i] >= ' ')
-      i++;
+    if (Text)
+      while ((byte) Text [IndexLine + i] >= ' ')
+        i++;
     return i;
   }
 
@@ -319,6 +328,8 @@ void _EditCommon::DrawCustom (void)
     else
       DebugAdd ("Redraw ALL"); //####
     Font_ = FontFind ();
+    if (Font_ == NULL)
+      return;
     if (Form->KeyFocus == this)
       TextCallBackCursor = &Text [IndexLine + Posn.x];
     TextCallBackSelection [0] = nullptr;

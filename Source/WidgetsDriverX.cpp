@@ -1107,7 +1107,39 @@ bool ClipboardSet (char *Text)
 
 ////////////////////////////////////////////////////////////////////////////
 //
-// MAin Programme
+// Start Thread
+
+#include <pthread.h>
+
+bool StartThread (_ThreadFunction ThreadFunction, void *Param)
+  {
+    pthread_t Thread;
+    //pthread_attr_t ThreadAttr;
+    int err;
+    char St [64], *s;
+    //
+    Thread = 0;
+    err = pthread_create (&Thread, NULL, ThreadFunction, Param);
+    s = St;
+    if (err)
+      {
+        StrCat (&s, "** StartThread ERROR ");
+        NumToStr (&s, err);
+      }
+    else
+      {
+        StrCat (&s, "New Thread 0x");
+        NumToHex (&s, Thread);
+      }
+    *s = 0;
+    DebugAdd (St);
+    return err == 0;
+  }
+
+
+////////////////////////////////////////////////////////////////////////////
+//
+// Main Programme
 
 int main (int argc, char* args [])
   {

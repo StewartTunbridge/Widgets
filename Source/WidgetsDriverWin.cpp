@@ -879,6 +879,38 @@ bool ClipboardSet (char *Text)
     return false;
   }
 
+
+////////////////////////////////////////////////////////////////////////////
+//
+// Start Thread
+
+//#include <pthread.h>
+
+bool StartThread (_ThreadFunction ThreadFunction, void *Param)
+  {
+    HANDLE Thread;
+    char St [64], *s;
+    //
+    Thread = CreateThread (NULL, 0, ThreadFunction, Param, 0, NULL);
+    s = St;
+    if (Thread == NULL)
+      StrCat (&s, "** StartThread ERROR");
+    else
+      {
+        StrCat (&s, "New Thread 0x");
+        NumToHex (&s, Thread);
+      }
+    *s = 0;
+    DebugAdd (St);
+    return Thread != NULL;
+    // Thread needs to be closed in Windows
+  }
+
+
+////////////////////////////////////////////////////////////////////////////
+//
+// Main Programme
+
 int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
   {
     int res;
