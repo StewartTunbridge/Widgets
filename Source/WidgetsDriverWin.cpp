@@ -494,12 +494,11 @@ bool RenderTexture (_Window *Window, _Texture *Texture, _Rect RecSource, int Des
     return true;
   }
 
-bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, bool Transparent)   // Allow resizing
+bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, int ColTransparent)   // Allow resizing
   {
     __Window *Window_;
     __Bitmap *Bitmap_;
     int sMax, dMax;
-    int cTrans;
     int pixel;
     int is, id;
     int xs, ys, xd, yd;
@@ -525,7 +524,7 @@ bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecD
               id = RecDest.y * TargetTexture->Width + RecDest.x;
               sMax = Bitmap_->Width * Bitmap_->Height;
               dMax = TargetTexture->Width * TargetTexture->Height;
-              cTrans = Bitmap_->Pixels [is];
+              //cTrans = Bitmap_->Pixels [is];
               // Generate Scaled and Masked Images
               #define RenderStretch
               #ifdef RenderStretch
@@ -544,7 +543,7 @@ bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecD
                     {
                       put = false;
                       if (id + xd < dMax)
-                        if (Transparent ? (pixel != cTrans) : true)
+                        if (pixel != ColTransparent)
                           {
                             TargetTexture->Pixels [id + xd] = pixel;
                             if (TargetTexture->Mask)

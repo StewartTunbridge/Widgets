@@ -15,17 +15,18 @@ Every _Container can contain children _Container(s) and will have a parent _Cont
 _Containers look after themselves after being created, performing all drawing and user 
   interactions without help from the app.
 All Widgets are descended (ultimately) from a _Container.
-All Widgets are created inside a _Container.
+All Widgets are created inside a _Container and can overlap.
 Coordinates are relative to the Parent _Container.
 All _Containers can optionally have: a Text string, a _Font, a _Bitmap and Colours.
 These resources are available to Children _Containers.
 
-Example, Create a window: 
+Example, Create a window, then add a Toolbar containing a Label and a Close button:
   _Form *Main = new _Form ("Title", {10, 10, 600, 400}, waResizable);
+  _Container *Toolbar = new _Container (Main->Container, {0, 0, 0, 64});
+  _Label *l = new _Label (Toolbar->Container, {0, 0, 64, 128}, "Some Text");
+  _Button *bClose = new _Button (Toolbar->Container, {l->Rect.Width, 0, 64, 128}, "Close", AcnClose);
 
-Example, Add a Button to the _Form:
-  _Button *bClose = new _Button (Main->Container, {4, 4, 64, 128}, "Close", AcnClose);
-  The specified action function (AcnClose) must exist: Example
+  Because an Action function was specified (AcnClose), it must be defined:
     void AcnClose (_Container *Container)
       {
         _Button *b = (_Button *) Container;
@@ -51,9 +52,9 @@ The app must provide a main_ (arg, argv) function:
       while (FormsUpdate ())   // this is the main loop
         {
           <<do stuff>>
-          sleep ();
+          usleep (1000);
         }
-      // Finished - Delete the Forms
+      // Finished - Delete the Forms (only necessary if you break out of the main loop)
       while (FormsList)
         delete (FormsList);
     }
@@ -71,6 +72,9 @@ WidgetsImages.cpp: Loads and Saves various image file types in/from _Bitmap
 WidgetsEdit.cpp: Implements Single & Multi line Edit Boxes
 WidgetGrid.cpp: Implements a versatile spreadsheet-like grid
 WidgetTree.cpp: Implements a versatile tree structure
+FileSlect.cpp: Create a _Form showing filtered local files. Aloows chaning directories and selcting an existing
+  file or creating a new one.
+
 
 
 WIDGETS REFERENCE
@@ -99,7 +103,9 @@ void Die (void);  or just delete me
 _Container
 ----------
 _Container (_Container *Parent_, _Rect Rect_, char *Text_ = NULL);   // make me
-  Rect_: x/y: Position relative to Parent. Width/Height: To use Parent size specify 0
+  Rect_: x/y: Position relative to Parent. Width/Height
+    To use Parent width/height, specify 0
+    To use Parent width/height AND lock changes with the parent, specify 0
   void Die (void);
     This is how you delete yourself while still in your own method
 
@@ -150,15 +156,14 @@ Drawing:
   bool ScrollRegionBarsDraw (void);
 
 DrawText:
+  If the _Container Font is NULL, it will inherit one
   Horizontal and Vertical Text Alignment
     aLeft, aRight, aCenter    (aLeft = aTop, aRight = aBottom)
   _Point TextMeasure (_Font *Font, char *Text);
-    If Font is NULL, it will inherit one
   void TextOutAligned (_Font *Font, _Rect Rect, char *Text, _Align Align, _Align AlignVert);
-    "
   void TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert);
   void TextOutWrapReverse (_Rect Rect, char *St, _Align Align, _Point Margin);
-    As above BUT Inverted for Menus etc
+    As above BUT the colours are "Inverted" for Menu Selections etc
 
 State:
   void Invalidate (bool ReDraw);
@@ -233,5 +238,6 @@ GRIDS
 
 TREES
 
+FILE SELECT
 
 ==============================================

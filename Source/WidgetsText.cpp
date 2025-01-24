@@ -15,9 +15,10 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
-#define TextSmooth   // Approximates blended Text
+int ItalicSlope = 10;
+bool ForceMonochrome = false;
 
-#define FontScale 64
+const int FontScale = 64;
 
 extern void DebugAdd (const char *St);
 extern void DebugAddS (const char *s1, const char *s2);
@@ -28,6 +29,8 @@ extern void DebugAddR (const char *St, _Rect *r);
 _TextCallBack *TextCallBack = nullptr;
 
 FT_Library  FreeTypeLibrary;
+FT_Matrix Matrix;
+FT_Vector Pen;
 
 bool FreeTypeInit (void)
   {
@@ -67,6 +70,29 @@ int CharWidthAdjustment (_Font *Font)
     return 0;
   }
 
+int LoadMode (byte Style)
+  {
+    if (Style & fsNoGrayscale || ForceMonochrome)
+      return FT_LOAD_TARGET_MONO;
+    return FT_LOAD_DEFAULT;
+  }
+
+FT_Render_Mode RenderMode (byte Style)
+  {
+    if (Style & fsNoGrayscale || ForceMonochrome)
+      return FT_RENDER_MODE_MONO;
+    return FT_RENDER_MODE_NORMAL;
+  }
+
+/*
+int GlyphWidth (_Font *Font, FT_GlyphSlot Glyph)
+  {
+    if (Font->Style & fsNoGrayscale || ForceMonochrome)
+      return Glyph->bitmap.width + Max ((int) (Font->YAdvance / 10), 1);
+    return Glyph->metrics.horiAdvance / FontScale;
+  }
+*/
+
 _Point FreeTypeMeasureString (char *St, _Font *Font, int *Index = NULL, int Search = -1)   // Size of string
   {
     _Point Size;
@@ -83,6 +109,8 @@ _Point FreeTypeMeasureString (char *St, _Font *Font, int *Index = NULL, int Sear
     Size = {0, 0};
     if (Font && St)
       {
+        if (Font->Style & (fsOutline | fsShadow))
+          Font->Style |= fsNoGrayscale;
         Size.y = Font->YAdvance;
         dx = CharWidthAdjustment (Font);
         while (true)
@@ -97,9 +125,11 @@ _Point FreeTypeMeasureString (char *St, _Font *Font, int *Index = NULL, int Sear
             if (Ch_ < 0)   // Invalid UTF8 character
               break;
             GlyphIndex = FT_Get_Char_Index (Face, Ch_);
-            if (FT_Load_Glyph (Face, GlyphIndex, FT_LOAD_DEFAULT))
+            if (FT_Load_Glyph (Face, GlyphIndex, LoadMode (Font->Style)))
               break;
-            x_ = Size.x + Face->glyph->metrics.horiAdvance / FontScale + dx;
+            //if (FT_Render_Glyph (((FT_Face) Font->Typeface)->glyph, RenderMode (Font->Style)))
+            //  break;
+              x_ = Size.x + dx + Face->glyph->metrics.horiAdvance / FontScale; //GlyphWidth (Font, Face->glyph)
             if ((Search >= 0) && x_ >= Search)
               break;
             Size.x = x_;
@@ -120,7 +150,6 @@ int CalcColour (int c1, int c2, int Split)   // Split is 0..255
     int Res, Mask, c1_, c2_, d;
     int n;
     //
-    #ifdef TextSmooth
     if (Split == 0)
       return c1;
     if (Split == 0xFF)
@@ -140,72 +169,100 @@ int CalcColour (int c1, int c2, int Split)   // Split is 0..255
           //Res |= c1_;
         else if (c1_ < c2_)
           d = (c1_ + (c2_ - c1_) * Split / 255) & Mask;
-          //Res |= (c1_ + (c2_ - c1_) * Split / 255) & Mask;
         else   // c1_ > c2_
           d = (c2_ + (c1_ - c2_) * (255 - Split) / 255) & Mask;
-          //Res |= (c2_ + (c1_ - c2_) * (255 - Split) / Split) & Mask;
         Res |= d;
         Mask <<= 8;
       }
-    #else
-    if (Split < 0x80)
-      Res = c1;
-    else
-      Res = c2;
-    #endif // TextSmooth
     return Res;
   }
 
-#define opBox     0x01
-#define opOblique 0x02
-#define opVert    0x04
-#define opNoGrey  0x08
+//int DebugCount = 0;
+//char DebugFile [] = "######.bmp";
+//#include "WidgetsImages.hpp"
 
-void CopyGlyph (_Window *Window, FT_GlyphSlot Glyph, _Point xy, int dx, byte op, int ColBG, int ColFG, bool Rotate, int YOffset)
+const int BoxX [] = {-1,  0,  1, -1, 1, -1, 0, 1};
+//const int BoxX [] = {-2,  0,  2, -2, 2, -2, 0, 2};
+const int BoxY [] = {-1, -1, -1,  0, 0,  1, 1, 1};
+//const int BoxY [] = {-2, -2, -2,  0, 0,  2, 2, 2};
+
+void CopyGlyph (_Window *Window, FT_GlyphSlot Glyph, byte Style, _Point xy, int dx, int ColBG, int ColFG, int YOffset)
   {
     byte *BitmapData, alpha;
     int x, y, x_, y_;
+    int bx, by;
     int Pixel;
     int i;
+    _Bitmap *bmp;
     //
+    if (Glyph->bitmap.rows == 0 || Glyph->bitmap.width == 0)
+      return;
+    bx = Glyph->bitmap.width + dx;
+    by = Glyph->bitmap.rows;
+    if (Style & fsRotate)
+      Swap (bx, by);
+    bmp = BitmapCreate (Window, bx, by);
+    /*for (y = 0; y < by; y++)
+      for (x = 0; x < bx; x++)
+        BitmapSetPixel (bmp, x, y, ColBG);*/
     BitmapData = Glyph->bitmap.buffer;
-    if (xy.x + (int) Glyph->bitmap.width >= 0)
-      for (y = 0; y < Glyph->bitmap.rows; y++)
-        {
-          for (x = 0; x < Glyph->bitmap.width + dx; x++)
-            {
-              // Calculate alpha allowing for fsBold
-              alpha = 0;
-              for (i = 0; i <= dx; i++)
-                if (x - i >= 0 && x - i < Glyph->bitmap.width)
+    // For every pixel in the Glyph
+    for (y = 0; y < Glyph->bitmap.rows; y++)
+      {
+        for (x = 0; x < Glyph->bitmap.width + dx; x++)
+          {
+            // Calculate alpha allowing for fsBold
+            alpha = 0;
+            for (i = 0; i <= dx; i++)
+              if (x - i >= 0 && x - i < Glyph->bitmap.width)
+                if (Style & fsNoGrayscale || ForceMonochrome)   // black / white rendering
+                  {
+                    if (BitmapData [(x - i) >> 3] & Bit [7 - ((x - i) & 7)])
+                      alpha = 255;
+                  }
+                else   // full alpha blend
                   if (BitmapData [x - i] > alpha)
                     alpha = BitmapData [x - i];
-              // Calculate pixel based on alpha and plot it
-              if (alpha > 0x00)
-                {
-                  x_ = xy.x + x + Glyph->metrics.horiBearingX / FontScale;
-                  y_ = xy.y + y + YOffset - Glyph->metrics.horiBearingY / FontScale;
-                  if (op & opOblique)
-                    x_ += (YOffset - y) / 4;
-                  if (Rotate)
-                    {
-                      x_ = xy.x + y + YOffset - Glyph->metrics.horiBearingY / FontScale;
-                      y_ = xy.y - x - Glyph->metrics.horiBearingX / FontScale;
-                      if (op & opOblique)
-                        y_ -= (YOffset - y) / 4;
-                    }
-                  if (op &opNoGrey)
-                    Pixel = (alpha > 0x40) ? ColFG : ColBG;
-                  else
-                    Pixel = CalcColour (ColBG, ColFG, alpha);
-                  if (op & opBox)
-                    RenderFillRect (Window, {x_-1, y_-1, 3, 3}, Pixel);
-                  else
-                    RenderDrawPoint (Window, Pixel, x_, y_);
-                }
-            }
-          BitmapData += Glyph->bitmap.width;
-        }
+            if (alpha > 0)   // coloured pixel
+              Pixel = CalcColour (ColBG, ColFG, alpha);   // Calculate pixel based on alpha and plot it
+            else
+              Pixel = ColBG;
+            // Calculate pixel position on bmp
+            if (Style & fsRotate)
+              {
+                x_ = y;
+                y_ = by - 1 - x;
+              }
+            else
+              {
+                x_ = x;
+                y_ = y;
+              }
+            BitmapSetPixel (bmp, x_, y_, Pixel);
+          }
+        BitmapData += Glyph->bitmap.pitch;
+      }
+    /***** char *c = DebugFile;
+    NumToStr (&c, DebugCount++, 6 | DigitsZeros);
+    BitmapSave (Window, bmp, DebugFile);
+    */
+    x = xy.x + Glyph->metrics.horiBearingX / FontScale;;
+    y = xy.y + YOffset - Glyph->metrics.horiBearingY / FontScale;
+    if (Style & fsRotate)
+      {
+        x = xy.x + YOffset - Glyph->metrics.horiBearingY / FontScale;
+        y = xy.y - Glyph->bitmap.width;
+      }
+    if (Style & fsFillBG)
+      ColBG = -1;
+    if (x + bx >= 0 && y + by >= 0)
+      {
+        RenderBitmap (Window, bmp, {0, 0, bx, by}, {x, y, bx, by}, ColBG);
+        if (Style & fsOutline)
+          for (i = 0; i < SIZEARRAY (BoxX); i++)
+            RenderBitmap (Window, bmp, {0, 0, bx, by}, {x + BoxX [i], y + BoxY [i], bx, by}, ColBG);
+      }
+    BitmapDestroy (bmp);
   }
 
 bool FreeTypeRenderString (_Window *Window, char *St, _Font *Font, _Point xy)
@@ -215,19 +272,20 @@ bool FreeTypeRenderString (_Window *Window, char *St, _Font *Font, _Point xy)
     FT_UInt GlyphIndex;
     FT_GlyphSlot Glyph;
     int ColourHL;
-    int ColourBG;
-    int dx, acc;
-    byte op;
+    int dx, acc, i;
     //
     xy0 = xy;
     ColourHL = cWhite;
     if (ColourR (Font->Colour) + ColourG (Font->Colour) + ColourB (Font->Colour) > 3 * 255 / 2)
       ColourHL = cBlack;
-    ColourBG = Font->ColourBG;
-    if (Font->Style & (fsOutline)) //fsShadow |
-      ColourBG = ColourHL;
     dx = CharWidthAdjustment (Font);
     acc = Max (1, (Font->Size + 5) / 16); //CharAccentSize (Font);
+    if (Font->Style & (fsOutline | fsShadow))
+      Font->Style |= fsNoGrayscale;
+    if (Font->Style & fsItalic)
+      FT_Set_Transform ((FT_Face) Font->Typeface, &Matrix, &Pen);
+    else
+      FT_Set_Transform ((FT_Face) Font->Typeface, NULL, &Pen);
     while (true)
       {
         if (TextCallBack)
@@ -238,30 +296,32 @@ bool FreeTypeRenderString (_Window *Window, char *St, _Font *Font, _Point xy)
         if (Ch_ < 0)   // Invalid UTF8 character
           return false;
         GlyphIndex = FT_Get_Char_Index ((FT_Face) Font->Typeface, Ch_);
-        if (FT_Load_Glyph ((FT_Face) Font->Typeface, GlyphIndex, FT_LOAD_DEFAULT /*| FT_LOAD_TARGET_MONO*/))
+        if (FT_Load_Glyph ((FT_Face) Font->Typeface, GlyphIndex, LoadMode (Font->Style)))
           return false;
         Glyph = ((FT_Face) Font->Typeface)->glyph;
-        if (FT_Render_Glyph (((FT_Face) Font->Typeface)->glyph, FT_RENDER_MODE_NORMAL))
+        if (FT_Render_Glyph (Glyph, RenderMode (Font->Style)))
           return false;
         if (Font->Style & fsFillBG)
           if (Font->Style & fsRotate)
-            RenderFillRect (Window, {xy.x, xy.y - Glyph->metrics.horiAdvance / FontScale + dx, Font->YAdvance, Glyph->metrics.horiAdvance / FontScale + dx}, Font->ColourBG);
+            RenderFillRect (Window, {xy.x, xy.y - Glyph->metrics.horiAdvance / FontScale - dx, Font->YAdvance, Glyph->metrics.horiAdvance / FontScale + dx}, Font->ColourBG);
           else
             RenderFillRect (Window, {xy.x, xy.y, Glyph->metrics.horiAdvance / FontScale + dx, Font->YAdvance}, Font->ColourBG);
-        op = 0x00;
-        if (Font->Style & fsItalic)
-          op = opOblique;
-        //if (Font->Style & (fsShadow | fsOutline))
-        //  op |= opNoGrey;
-        if (Font->Style & fsShadow)
-          CopyGlyph (Window, Glyph, {xy.x + acc, xy.y + acc}, dx, op | opNoGrey, ColourBG, ColourHL, Font->Style & fsRotate, Font->YOffset);
         if (Font->Style & fsOutline)
-          CopyGlyph (Window, Glyph, {xy.x, xy.y}, dx, op | opNoGrey | opBox, ColourBG, ColourHL, Font->Style & fsRotate, Font->YOffset);
-        CopyGlyph (Window, Glyph, {xy.x, xy.y}, dx, op, ColourBG, Font->Colour, Font->Style & fsRotate, Font->YOffset);
-        if (Font->Style & fsRotate)
-          xy.y -= Glyph->metrics.horiAdvance / FontScale + dx;
+          {
+            CopyGlyph (Window, Glyph, Font->Style, {xy.x, xy.y}, dx, Font->ColourBG, ColourHL, Font->YOffset);
+            CopyGlyph (Window, Glyph, Font->Style & ~fsOutline, {xy.x, xy.y}, dx, ColourHL, Font->Colour, Font->YOffset);
+          }
         else
-          xy.x += Glyph->metrics.horiAdvance / FontScale + dx;
+          {
+            if (Font->Style & fsShadow)
+              CopyGlyph (Window, Glyph, Font->Style, {xy.x + acc, xy.y + acc}, dx, Font->ColourBG, ColourHL, Font->YOffset);
+            CopyGlyph (Window, Glyph, Font->Style, {xy.x, xy.y}, dx, Font->ColourBG, Font->Colour, Font->YOffset);
+          }
+        i = dx + Glyph->metrics.horiAdvance / FontScale; //GlyphWidth (Font, Glyph) + dx;
+        if (Font->Style & fsRotate)
+          xy.y -= i;
+        else
+          xy.x += i;
       }
     if (Font->Style & fsUnderline)
       if (Font->Style & fsRotate)
@@ -286,7 +346,14 @@ _Font *FontCreate (char *FontName, int Size, byte Style, int Colour)
     _Font *Font;
     //
     if (FontCount++ == 0)
-      FreeTypeInit ();
+      {
+        FreeTypeInit ();
+        // Define a transformation matrix for italic characters
+        Matrix.xx = (FT_Fixed) (CosDeg (ItalicSlope) * 0x10000L);
+        Matrix.xy = (FT_Fixed) (SinDeg (ItalicSlope) * 0x10000L);
+        Matrix.yx = 0;
+        Matrix.yy = 0x10000L;
+      }
     Font = (_Font *) malloc (sizeof (_Font));
     if (FT_New_Face (FreeTypeLibrary, FontName, 0, (FT_Face *) &Font->Typeface) == 0)
       if (FT_Set_Pixel_Sizes ((FT_Face) Font->Typeface, 0, Size) == 0)
@@ -339,6 +406,7 @@ int TextIndex (_Font *Font, char *Text, int PosX)
 
 void TextRender (_Window *Window, _Font *Font, char *Text, _Point xy)
   {
+    //RenderFillRect (Window, {xy.x-1, xy.y-1, 3, 3}, cRed);  //####
     if (Font && Text)
       FreeTypeRenderString (Window, Text, Font, xy);
   }

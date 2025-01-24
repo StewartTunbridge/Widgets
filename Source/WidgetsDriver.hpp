@@ -137,7 +137,8 @@ extern void RenderDrawLine (_Window *Window, int Colour, int x1, int y1, int x2,
 extern void RenderFillRect (_Window *Window, _Rect Rect, int Colour);
 extern void RenderFillTransparent (_Window *Window);
 extern bool RenderTexture (_Window *Window, _Texture *Texture, _Rect RecSource, int DestX, int DestY, byte AlphaOffset);
-extern bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, bool Transparent);   // Allow resizing
+//extern bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Bitmap *BitmapMask);   // No resizing
+extern bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, int ColTransparent);   // Allow resizing
 
 extern bool TextureToFile (_Window *Window, _Texture *Texture, int Width, int Height, char *Filename);
 

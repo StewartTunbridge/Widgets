@@ -5,4 +5,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-extern bool FileSelect (char **Name, char *Filter, bool AllowNewFile);   // caller must free Name
+extern bool FileSelect (char **Name, char *Filter, bool SaveFile);   // caller must free Name
+
+extern int DirItemsCompare (_DirItem *Data1, _DirItem *Data2);   // Can be used in ListSort (). Sorts by IsDir then Name

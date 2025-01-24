@@ -4,7 +4,7 @@
 //
 // Author: Stewart Tunbridge, Pi Micros
 // Email:  stewarttunbridge@gmail.com
-// Copyright (c) 2024 Stewart Tunbridge, Pi Micros
+// Copyright (c) 2000, 2024 Stewart Tunbridge, Pi Micros
 //
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -96,26 +96,14 @@ extern void StrAssignCopy (char **Dest, const char *Source);
 
 extern char *StrPos (char *St, const char *Target);    // Search for string
 extern char *StrPos (char *St, const char Target);     // Search for char
-//extern int StrPosLastCh (char *St, const char Target); // Search for last character
-//extern int StrPos_ (char St [], int Start, const char Target);   // Search for char from Start. Return index or strlen
 
 extern int StrCmp (const char *s1, const char *s2);   // Compare: 0 => s1 = s2  -ve => s1 < s2  +ve => s1 > s2
 extern bool StrSame (const char *S1, const char *S2);
-//extern bool StrSame (const char *S1, const char *S2, int Len);
-//extern bool StrSameWild (const char *Target, const char *St);
-//bool StrMatch (char *St, char *Target);
-
-//extern void StrAppend (char *St, char Ch);
 
 extern void StepSpace (char **Pos);
 
 // Fields
 extern char *StrGetItem (char **String, const char Separator);   // Caller must free result
-//extern char *StrGetItem (char **Pos, char Separator);   // Get a symbol separated item. Return new string. User must free
-//extern char *StrGetItem (char *Strings, int Item, char Separator);   // Caller must free result
-//extern char *StrGetField (char **Pos);   // Get a tab separated item. Return new string. User must free
-//extern int StrFieldsCount (char *St);   // Count the tab separated items in St
-//extern int StrCountChar (char *St, char Target);
 
 // Conversion to numbers
 extern bool StrError;
@@ -156,8 +144,9 @@ extern void StrCat (char **Dest, const char *St);   // Append String
 extern void StrCat (char **Dest, const char Ch);   // Append Char
 extern void StrCat (char **Dest, const char Ch, int n);   // Append Char repeated
 extern void StrCat (char **Dest, const char *St, int n);   // Append String length limited
-extern void StrInsert (char *Dest, const char Ch);
+extern void StrInsert (char *Dest, char Ch);
 extern void StrAppend (char *Dest, char Ch);
+extern void StrAppend (char *Dest, char *St);
 
 // Filenames
 extern char *StrFindFileExtension (char *FileName);
@@ -177,6 +166,11 @@ template <typename T> inline T Max (T a, T b)
 template <typename T> inline T Min (T a, T b)
   {
     return a > b ? b : a;
+  }
+
+template <typename T> inline T Limit (T val, T min, T max)
+  {
+    return Min (Max (val, min), max);
   }
 
 template <typename T> inline int Sign (T a)
@@ -400,7 +394,7 @@ T* ListSort (T *List, int ListSortCompare (T *t1, T *t2))
 
 //extern int Max (int v1, int v2);
 //extern int Min (int v1, int v2);
-extern void Limit (int *Value, int MinValue, int MaxValue);
+//extern void Limit (int *Value, int MinValue, int MaxValue);
 //extern int Abs (int x);
 
 // Dynamic Array
@@ -418,11 +412,14 @@ extern float Pi;   // already set but feel free to change reality here
 extern int Round (float x);
 extern float Sqr (float x);
 extern float Sqrt (float a);
-extern float Sin (float deg);
-extern float Cos (float deg);
+extern float Sin (float Rad);
+extern float Cos (float Rad);
+extern float SinDeg (float Deg);
+extern float CosDeg (float Deg);
 
 //extern int SystemTick (void);
-extern int  ClockMS ();   // ms Counter
+extern int ClockMS (void);   // ms counter
+extern int ClockuS (void);   // micro second counter
 extern bool GetDateTime (tm *DateTime);
 extern bool SetDateTime (tm *DateTime);
 extern bool SetDateTimeRTC (tm *DateTime);
@@ -484,6 +481,7 @@ extern longint FileSize (char *Filename);
 extern longint FileSize (int File);
 extern int FileRead (int File, byte *Data, int DataSize);
 extern bool FileWrite (int File, byte *Data, int DataSize);
+extern bool FileWriteLine (int File, char *St);
 extern void ForcePath (char *Path);
 extern bool GetCurrentPath (char **Path);   // Caller must free *Path
 

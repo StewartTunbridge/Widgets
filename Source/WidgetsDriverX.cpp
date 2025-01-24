@@ -5,7 +5,7 @@
 //
 // Author: Stewart Tunbridge, Pi Micros
 // Email:  stewarttunbridge@gmail.com
-// Copyright (c) 2024 Stewart Tunbridge, Pi Micros
+// Copyright (c) 2020,2025 Stewart Tunbridge, Pi Micros
 //
 /////////////////////////////////////////////////////////////////////////
 
@@ -25,15 +25,24 @@ extern void DebugAddS (const char *s1, const char *s2);   // defined in Widgets.
 extern void DebugAdd (const char *St, int n);
 extern void DebugAddR (const char *St, _Rect *r);
 
+extern bool RenderBitmapTransparentTL (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest);
+
 #define TexturesEnabled
+
+/*
+GC gcCopy;
+GC gcOr;
+GC gcAnd;
+GC gcAndInverted;
+*/
 
 typedef struct
   {
     int Width, Height;
     Pixmap Image;
     Pixmap Mask;
-    GC gc;
-    GC gcMask;
+    //@@@@GC gc;
+    //@@@@GC gcMask;
   } __Texture;
 
 typedef struct
@@ -43,7 +52,10 @@ typedef struct
     int XDepth;
     Visual *XVisual;
     Window XWindow;
-    GC WinGC;
+    GC WinGCCopy;
+    GC WinGCOr;
+    GC WinGCAnd;
+    GC WinGCAndInvert;
     //
     byte WindowAttributes;
     int SizeX, SizeY;
@@ -142,6 +154,11 @@ int ColourToXColour (int Colour)//, byte Alpha)
   {
     //return ColourR (Colour) << 16 | ColourG (Colour) << 8 | ColourB (Colour) | Alpha << 24;
     return ColourR (Colour) << 16 | ColourG (Colour) << 8 | ColourB (Colour);
+  }
+
+int XColourToColour (int XColour)
+  {
+    return ((XColour & 0xFF0000) >> 16) | (XColour & 0x00FF00) | ((XColour & 0x0000FF) << 16);
   }
 
 
@@ -267,46 +284,47 @@ void SetGCFunction (__Window *Window, GC gc, int Function)
   {
     XGCValues gcv;
     //
-    XGetGCValues (XDisplay, gc, GCFunction, &gcv);
+    //XGetGCValues (XDisplay, gc, GCFunction, &gcv);
     gcv.function = Function;
     XChangeGC (XDisplay, gc, GCFunction, &gcv);
   }
 
 // Copy pixmap area using a mask to a Drawable
 // Mask is Black & White. Areas in Source corresponding White areas in Mask are drawn on Dest
-bool CopyArea (__Window *Window, Drawable Source, Drawable Dest, Drawable SourceMask, Drawable DestMask, GC gc, int x, int y, int Width, int Height, int DestX, int DestY)
+bool CopyArea (__Window *Window, Drawable Source, Drawable Dest, Drawable SourceMask, Drawable DestMask, int x, int y, int Width, int Height, int DestX, int DestY)
   {
     Pixmap Mask_;
+    __Window * Window_;
     //
-    //SourceMask = DestMask = 0;//####
+    Window_ = Window;
     if (SourceMask == 0)
       {
-        XCopyArea (XDisplay, Source, Dest, gc, x, y, Width, Height, DestX, DestY);
+        XCopyArea (XDisplay, Source, Dest, Window_->WinGCCopy, x, y, Width, Height, DestX, DestY);
         if (DestMask)
           {
-            XSetForeground (XDisplay, gc, 0x00FFFFFF);
-            XFillRectangle (XDisplay, DestMask, gc, DestX, DestY, Width, Height);
+            XSetForeground (XDisplay, Window_->WinGCCopy, 0x00FFFFFF);
+            XFillRectangle (XDisplay, DestMask, Window_->WinGCCopy, DestX, DestY, Width, Height);
           }
       }
     else   // #### Try XSetClipMask instead of the following logic, may be faster
       {
         Mask_ = XCreatePixmap (XDisplay, Dest, Width, Height, Window->XDepth);
         // Clear effected pixels in Dest
-        SetGCFunction (Window, gc, GXandInverted);
-        XCopyArea (XDisplay, SourceMask, Dest, gc, x, y, Width, Height, DestX, DestY);
+        //@@@@SetGCFunction (Window, gc, GXandInverted);
+        XCopyArea (XDisplay, SourceMask, Dest, Window_->WinGCAndInvert, x, y, Width, Height, DestX, DestY);
         // Generate coloured Mask to OR into Dest
-        SetGCFunction (Window, gc, GXcopy);
-        XCopyArea (XDisplay, SourceMask, Mask_, gc, x, y, Width, Height, 0, 0);
-        SetGCFunction (Window, gc, GXand);
-        XCopyArea (XDisplay, Source, Mask_, gc, x, y, Width, Height, 0, 0);
+        //@@@@SetGCFunction (Window, gc, GXcopy);
+        XCopyArea (XDisplay, SourceMask, Mask_, Window_->WinGCCopy, x, y, Width, Height, 0, 0);
+        //@@@@SetGCFunction (Window, gc, GXand);
+        XCopyArea (XDisplay, Source, Mask_, Window_->WinGCAnd, x, y, Width, Height, 0, 0);
         // Copy new coloured Mask into Dest
-        SetGCFunction (Window, gc, GXor);
-        XCopyArea (XDisplay, Mask_, Dest, gc, 0, 0, Width, Height, DestX, DestY);
+        //@@@@SetGCFunction (Window, gc, GXor);
+        XCopyArea (XDisplay, Mask_, Dest, Window_->WinGCOr, 0, 0, Width, Height, DestX, DestY);
         // Modify DestMask
         if (DestMask)
-          XCopyArea (XDisplay, SourceMask, DestMask, gc, 0, 0, Width, Height, DestX, DestY);
+          XCopyArea (XDisplay, SourceMask, DestMask, Window_->WinGCOr, 0, 0, Width, Height, DestX, DestY);
         // Restore gc & free new Mask
-        SetGCFunction (Window, gc, GXcopy);
+        //@@@@SetGCFunction (Window, gc, GXcopy);
         XFreePixmap (XDisplay, Mask_);
       }
     return true;
@@ -347,7 +365,7 @@ const byte icon_bits [] =
 //////////////////////////////////////////////////////////////////////////////
 // WINDOW
 
-//XVisualInfo vinfo;
+XVisualInfo vinfo;
 XSetWindowAttributes attr;
 
 _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte WindowAttributes)
@@ -397,7 +415,14 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
           {
             Res->SizeX = SizeX_;
             Res->SizeY = SizeY_;
-            Res->WinGC = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
+            Res->WinGCCopy = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
+            SetGCFunction (Res, Res->WinGCCopy, GXcopy);
+            Res->WinGCOr = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
+            SetGCFunction (Res, Res->WinGCOr, GXor);
+            Res->WinGCAnd = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
+            SetGCFunction (Res, Res->WinGCAnd, GXand);
+            Res->WinGCAndInvert = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
+            SetGCFunction (Res, Res->WinGCAndInvert, GXandInverted);
             Res->tIcon = NULL;
             Res->pIcon = 0;
             //
@@ -514,7 +539,7 @@ bool WindowSetIcon (_Window *Window, _Bitmap *Bitmap)
           {
             RenderTarget (Window, Window_->tIcon, 0, {0, 0, Img->width, Img->height});
             RenderFillTransparent (Window);
-            RenderBitmap (Window, Bitmap, {0, 0, Img->width, Img->height}, {0, 0, Img->width, Img->height}, true);
+            RenderBitmapTransparentTL (Window, Bitmap, {0, 0, Img->width, Img->height}, {0, 0, Img->width, Img->height});
             wm_hints->icon_pixmap = Window_->tIcon->Image;
             wm_hints->icon_mask = Window_->tIcon->Mask;
             wm_hints->flags = IconPixmapHint | IconMaskHint;
@@ -522,7 +547,7 @@ bool WindowSetIcon (_Window *Window, _Bitmap *Bitmap)
         else
           {
             Window_->pIcon = XCreatePixmap (XDisplay, Window_->XWindow, Img->width, Img->height, Window_->XDepth);
-            XPutImage (XDisplay, Window_->pIcon, Window_->WinGC, Img, 0, 0, 0, 0, Img->width, Img->height);
+            XPutImage (XDisplay, Window_->pIcon, Window_->WinGCCopy, Img, 0, 0, 0, 0, Img->width, Img->height);
             wm_hints->icon_pixmap = Window_->pIcon;
             wm_hints->flags = IconPixmapHint;  // StateHint | IconPixmapHint | InputHint;
           }
@@ -582,7 +607,10 @@ void WindowDestroy (_Window *Window)
       XFreePixmap (XDisplay, Window_->pIcon);
     if (MouseCursorPixmap)
       XFreePixmap (XDisplay, MouseCursorPixmap);
-    XFreeGC (XDisplay, Window_->WinGC);
+    XFreeGC (XDisplay, Window_->WinGCCopy);
+    XFreeGC (XDisplay, Window_->WinGCOr);
+    XFreeGC (XDisplay, Window_->WinGCAnd);
+    XFreeGC (XDisplay, Window_->WinGCAndInvert);
     XDestroyWindow (XDisplay, Window_->XWindow);
     //if (Window_->XDisplay)
     //  XCloseDisplay (Window_->XDisplay);
@@ -614,9 +642,9 @@ bool RenderTarget (_Window *Window, _Texture *Texture, int Colour, _Rect Clip)  
         //WindowTexture.Height = 0;
         WindowTexture.Image = Window_->XWindow;
         WindowTexture.Mask = 0;
-        WindowTexture.gc = Window_->WinGC; //DefaultGC (Window_->XDisplay, Window_->XScreen);
+        //@@@@WindowTexture.gc = Window_->WinGC; //DefaultGC (Window_->XDisplay, Window_->XScreen);
         //WindowTexture.gc = DefaultGC (Window_->XDisplay, Window_->XScreen);
-        WindowTexture.gcMask = NULL;
+        //@@@@WindowTexture.gcMask = NULL;
         RenderTargetTexture = &WindowTexture;
       }
     TargetColour = -1;
@@ -627,7 +655,8 @@ bool RenderTarget (_Window *Window, _Texture *Texture, int Colour, _Rect Clip)  
         XTargetClip.y = Clip.y;
         XTargetClip.width = Clip.Width;
         XTargetClip.height = Clip.Height;
-        XSetClipRectangles (XDisplay, RenderTargetTexture->gc, 0, 0, &XTargetClip, 1, Unsorted);
+        //@@@@XSetClipRectangles (XDisplay, RenderTargetTexture->gc, 0, 0, &XTargetClip, 1, Unsorted);
+        XSetClipRectangles (XDisplay, Window_->WinGCCopy, 0, 0, &XTargetClip, 1, Unsorted);
         //XSetClipRectangles (Window_->XDisplay, RenderTargetTexture->gc, Clip.x, Clip.y, &XTargetClip, 1, Unsorted);
       }
     return true;
@@ -644,43 +673,67 @@ void RenderPresent (_Window *Window, byte Alpha)
 
 void SetRenderDrawColor (_Window *Window, int Colour)//, byte Alpha = 0xFF)
   {
+    __Window *Window_;
     int Col;
     //
+    Window_ = (__Window *) Window;
     Col = ColourToXColour (Colour);//, Alpha);
     if (Col != TargetColour)
       {
-        XSetForeground (XDisplay, RenderTargetTexture->gc, Col);
+        //@@@@XSetForeground (XDisplay, RenderTargetTexture->gc, Col);
+        XSetForeground (XDisplay, Window_->WinGCCopy, Col);
         TargetColour = Col;
       }
   }
 
 void RenderDrawPoint (_Window *Window, int Colour, int x, int y)//, byte Alpha = 0xFF)
   {
+    __Window *Window_;
+    //
+    Window_ = (__Window *) Window;
     SetRenderDrawColor (Window, Colour);//, Alpha);
-    XDrawPoint (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, x, y);
+    //@@@@XDrawPoint (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, x, y);
+    XDrawPoint (XDisplay, RenderTargetTexture->Image, Window_->WinGCCopy, x, y);
     if (RenderTargetTexture->Mask)
-      XDrawPoint (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, x, y);
+      //@@@@XDrawPoint (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, x, y);
+      {
+        XSetForeground (XDisplay, Window_->WinGCOr, 0xFFFFFF);
+        XDrawPoint (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr, x, y);
+      }
   }
 
 void RenderDrawLine (_Window *Window, int Colour, int x1, int y1, int x2, int y2)
   {
+    __Window *Window_;
+    //
+    Window_ = (__Window *) Window;
     if (x1 == x2 && y1 == y2)
       RenderDrawPoint (Window, Colour, x1, y1);//, 0xFF);
     else
       {
         SetRenderDrawColor (Window, Colour);
-        XDrawLine (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, x1, y1, x2, y2);
+        //@@@@XDrawLine (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, x1, y1, x2, y2);
+        XDrawLine (XDisplay, RenderTargetTexture->Image, Window_->WinGCCopy, x1, y1, x2, y2);
         if (RenderTargetTexture->Mask)
-          XDrawLine (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, x1, y1, x2, y2);
+          //@@@@XDrawLine (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, x1, y1, x2, y2);
+          {
+            XSetForeground (XDisplay, Window_->WinGCOr, 0xFFFFFF);
+            XDrawLine (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr, x1, y1, x2, y2);
+          }
       }
   }
 
 void RenderFillRect (_Window *Window, _Rect Rect, int Colour)
   {
+    __Window *Window_;
+    //
+    Window_ = (__Window *) Window;
     SetRenderDrawColor (Window, Colour);
-    XFillRectangle (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, Rect.x, Rect.y, Rect.Width, Rect.Height);
+    //@@@@XFillRectangle (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, Rect.x, Rect.y, Rect.Width, Rect.Height);
+    XFillRectangle (XDisplay, RenderTargetTexture->Image, Window_->WinGCCopy, Rect.x, Rect.y, Rect.Width, Rect.Height);
     if (RenderTargetTexture->Mask)
-      XFillRectangle (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, Rect.x, Rect.y, Rect.Width, Rect.Height);
+      //@@@@XFillRectangle (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, Rect.x, Rect.y, Rect.Width, Rect.Height);
+      XFillRectangle (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr, Rect.x, Rect.y, Rect.Width, Rect.Height);
   }
 
 void RenderFillTransparent (_Window *Window)
@@ -690,12 +743,15 @@ void RenderFillTransparent (_Window *Window)
     Window_ = (__Window *) Window;
     if (RenderTargetTexture->Mask == 0)   // no Mask so make one
       RenderTargetTexture->Mask = XCreatePixmap (XDisplay, Window_->XWindow, RenderTargetTexture->Width, RenderTargetTexture->Height, Window_->XDepth);
-    if (RenderTargetTexture->gcMask == NULL)   // no GC so make one
-      RenderTargetTexture->gcMask = XCreateGC (XDisplay, RenderTargetTexture->Mask, 0, NULL);
+    //@@@@if (RenderTargetTexture->gcMask == NULL)   // no GC so make one
+    //@@  RenderTargetTexture->gcMask = XCreateGC (XDisplay, RenderTargetTexture->Mask, 0, NULL);
     // Reset the Mask to Black, but ready for White
-    XSetForeground (XDisplay, RenderTargetTexture->gcMask, 0x000000);   // Fill Mask with Black
-    XFillRectangle (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, 0, 0, RenderTargetTexture->Width, RenderTargetTexture->Height);
-    XSetForeground (XDisplay, RenderTargetTexture->gcMask, 0xFFFFFFFF);   // Restore White
+    //@@@@XSetForeground (XDisplay, RenderTargetTexture->gcMask, 0x000000);   // Fill Mask with Black
+    XSetForeground (XDisplay, Window_->WinGCCopy, 0x000000);   // Fill Mask with Black
+    //@@@@XFillRectangle (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, 0, 0, RenderTargetTexture->Width, RenderTargetTexture->Height);
+    XFillRectangle (XDisplay, RenderTargetTexture->Mask, Window_->WinGCCopy, 0, 0, RenderTargetTexture->Width, RenderTargetTexture->Height);
+    //@@@@XSetForeground (XDisplay, RenderTargetTexture->gcMask, 0xFFFFFFFF);   // Restore White
+    //@@@@XSetForeground (XDisplay, Window_->WinGCMask, 0xFFFFFFFF);   // Restore White
   }
 
 void EventPoll (_Event *Event)
@@ -703,8 +759,8 @@ void EventPoll (_Event *Event)
     //__Window *Window_;
     XEvent e;
     //int Len;
-    char s [16];
     KeySym ks;
+    char s [16];
     static int ShiftState = 0;
     int ShiftState_;
     //
@@ -714,17 +770,12 @@ void EventPoll (_Event *Event)
         XNextEvent (XDisplay, &e);
         Event->WindowID = (_WindowID) e.xany.window;   // same as XWindow
         //
-        if (e.type == Expose)
-          Event->Type = etWindowRedraw;
         //#define DebugShowXEvents
         #ifdef DebugShowXEvents
-        char s [128], *p;
-        p = s;
-        StrCat (&p, "XEvent: ");
-        NumToStr (&p, e.type);
-        *p = 0;
-        DebugAdd (s);
+        DebugAdd ("XEvent: ", e.type);
         #endif // DebugShowXEvents
+        if (e.type == Expose)
+          Event->Type = etWindowRedraw;
         else if (e.type == ConfigureNotify)
           {
             Event->Type = etWindowResize;
@@ -803,6 +854,10 @@ bool WindowIDMatch (_WindowID WindowID, _Window *Window_)
     return ((Window) WindowID) == ((__Window *) Window_)->XWindow;
   }
 
+////////////////////////////////////////////////////////////////////////////
+//
+// Texture Functions
+
 bool RenderTexture (_Window *Window, _Texture *Texture, _Rect RecSource, int DestX, int DestY, byte AlphaOffset)
   {
     __Window *Window_;
@@ -812,15 +867,12 @@ bool RenderTexture (_Window *Window, _Texture *Texture, _Rect RecSource, int Des
     Texture_ = (__Texture *) Texture;
     if (Texture)
       return CopyArea (Window_, Texture_->Image, RenderTargetTexture->Image,
-                       Texture_->Mask, RenderTargetTexture->Mask, RenderTargetTexture->gc,
+                       //@@@@Texture_->Mask, RenderTargetTexture->Mask, RenderTargetTexture->gc,
+                       Texture_->Mask, RenderTargetTexture->Mask,
                        RecSource.x, RecSource.y, RecSource.Width, RecSource.Height, DestX, DestY);
     return false;
   }
 
-
-////////////////////////////////////////////////////////////////////////////
-//
-// Texture Functions
 
 _Texture *TextureCreate (_Window *Window, int Width, int Height)
   {
@@ -834,12 +886,9 @@ _Texture *TextureCreate (_Window *Window, int Width, int Height)
     Texture = (__Texture *) malloc (sizeof (__Texture));
     Texture->Width = Width;
     Texture->Height = Height;
-    Texture->Image = 0;
-    Texture->gc = 0;
     Texture->Image = XCreatePixmap (XDisplay, Window_->XWindow, Width, Height, Window_->XDepth);
-    Texture->gc = XCreateGC (XDisplay, Texture->Image, 0, NULL);
+    //@@@@Texture->gc = XCreateGC (XDisplay, Texture->Image, 0, NULL);
     Texture->Mask = 0;
-    Texture->gcMask = 0;
     #endif // TexturesEnabled
     return Texture;
   }
@@ -851,14 +900,10 @@ void TextureDestroy (_Window *Window, _Texture *Texture)
     if (Texture)
       {
         Texture_ = (__Texture *) Texture;
-        if (Texture_->gc)
-          XFreeGC (XDisplay, Texture_->gc);
         if (Texture_->Image)
           XFreePixmap (XDisplay, Texture_->Image);
         if (Texture_->Mask)
           XFreePixmap (XDisplay, Texture_->Mask);
-        if (Texture_->gcMask)
-          XFreeGC (XDisplay, Texture_->gcMask);
         free (Texture_);
       }
   }
@@ -896,7 +941,7 @@ bool BitmapGetSize (_Bitmap *Bitmap, int *Width, int *Height)
 
 int BitmapGetPixel (_Bitmap *Bitmap, int x, int y)
   {
-    return ColourToXColour (XGetPixel ((XImage *) Bitmap, x, y));
+    return XColourToColour (XGetPixel ((XImage *) Bitmap, x, y));
   }
 
 bool BitmapSetPixel (_Bitmap *Bitmap, int x, int y, int Colour)
@@ -909,145 +954,179 @@ bool BitmapSetPixel (_Bitmap *Bitmap, int x, int y, int Colour)
     return false;
   }
 
-bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, bool Transparent)
+extern int Time1, Time2, Time3;
+
+bool RenderBitmap (__Window *Window, XImage *Img, _Rect RecSource, int x, int y, int ColTransparent)
   {
     __Window *Window_;
-    XImage *Img1, *Img2;
-    XImage *ImgMask1, *ImgMask2;
-    int xs, ys, xd, yd;
-    int a;
-    bool get, put;
-    int pixel, pixeltrans;
+    XImage *Img_, *ImgMask;
+    int x1, y1;
+    int Pixel;
     //
     Window_ = (__Window *) Window;
-    Img1 = (XImage *) Bitmap;
-    Img2 = NULL;
-    ImgMask1 = NULL;
-    ImgMask2 = NULL;
-    if (Bitmap)
-      if ((RecDest.Width > 0) && (RecDest.Height > 0))
+    if (Img)
+      if ((RecSource.Width > 0) && (RecSource.Height > 0))
         {
-          pixeltrans = -1;
-          if (Transparent)
+          int Tick1 = ClockuS ();//####
+          // If Transparent, create a transparency Mask
+          if (ColTransparent >= 0)
             {
-              pixeltrans = XGetPixel (Img1, RecSource.x, RecSource.y);
-              ImgMask1 = (XImage *) BitmapCreate (Window, RecDest.Width, RecDest.Height);
-              ImgMask2 = (XImage *) BitmapCreate (Window, RecDest.Width, RecDest.Height);
-              for (yd = 0; yd < RecDest.Height; yd++)
-                for (xd = 0; xd < RecDest.Width; xd++)
+              //Img_ = XGetImage (XDisplay, RenderTargetTexture->Image, x, y, RecSource.Width, RecSource.Height, 7, ZPixmap);//####
+              //XDestroyImage (Img_);
+              ColTransparent = ColourToXColour (ColTransparent);
+              Img_ = (XImage *) BitmapCreate (Window, RecSource.Width, RecSource.Height);
+              int Tick2 = ClockuS ();//####
+              ImgMask = (XImage *) BitmapCreate (Window, RecSource.Width, RecSource.Height);
+              for (y1 = 0; y1 < RecSource.Height; y1++)
+                for (x1 = 0; x1 < RecSource.Width; x1++)
                   {
-                    XPutPixel (ImgMask1, xd, yd, 0x000000);
-                    XPutPixel (ImgMask2, xd, yd, 0x000000);
+                    Pixel = XGetPixel (Img, RecSource.x + x1, RecSource.y + y1);
+                    if (Pixel == ColTransparent)
+                      {
+                        XPutPixel (Img_, x1, y1, 0x000000);
+                        XPutPixel (ImgMask, x1, y1, 0x000000);
+                      }
+                    else
+                      {
+                        XPutPixel (Img_, x1, y1, Pixel);
+                        XPutPixel (ImgMask, x1, y1, 0xFFFFFF);
+                      }
                   }
-            }
-          // Allow for resizing and Transparent
-          Img2 = (XImage *) BitmapCreate (Window, RecDest.Width, RecDest.Height);
-          // Generate Scaled and Masked Images
-          xs = ys = 0;
-          xd = yd = 0;
-          get = put = true;
-          while (true)
-            {
-              if (get & put)
-                {
-                  get = false;
-                  pixel = XGetPixel (Img1, RecSource.x + xs, RecSource.y + ys);
-                }
-              if (put)
-                {
-                  put = false;
-                  if (pixel != pixeltrans)
-                    {
-                      XPutPixel (Img2, xd, yd, pixel);
-                      if (Transparent)
-                        {
-                          XPutPixel (ImgMask1, xd, yd, 0xFFFFFFFF);
-                          XPutPixel (ImgMask2, xd, yd, pixel);
-                        }
-                    }
-                }
-              a = (xs+1) * RecDest.Width - (xd+1) * RecSource.Width;
-              if (a <= 0)
-                {
-                  xs++;
-                  get = true;
-                }
-              if (a >= 0)
-                {
-                  xd++;
-                  put = true;
-                }
-              if (xs >= RecSource.Width && get)
-                {
-                  get = put = true;
-                  xs = 0;
-                  xd = 0;
-                  a = (ys+1) * RecDest.Height - (yd+1) * RecSource.Height;
-                  if (a <= 0)
-                    {
-                      ys++;
-                      get = true;
-                    }
-                  if (a >= 0)
-                    {
-                      yd++;
-                      put = true;
-                    }
-                  if (ys >= RecSource.Height && get)
-                    break;
-                }
-            }
-          // Now put on "screen"
-          if (Transparent)
-            {
+              Time2 += ClockuS () - Tick2;//####
+              // Now put on "screen"
               // Draw the unmasked bits in Target
               // Clear effected pixels in Dest (using AND NOT)
-              SetGCFunction (Window_, RenderTargetTexture->gc, GXandInverted);
-              XPutImage (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, ImgMask1,
-                         0, 0, RecDest.x, RecDest.y,
-                         RecDest.Width, RecDest.Height);
+              int Tick3 = ClockuS (); //####
+              //@@@@SetGCFunction (Window, RenderTargetTexture->gc, GXandInverted);//GXandInverted);            NOTE REMOVING SetGCFunction make it very fast
+              //@@@@SetGCFunction (Window, Window_->WinGC, GXandInverted);//GXandInverted);            NOTE REMOVING SetGCFunction make it very fast
+              //@@@@XPutImage (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, ImgMask,
+              XPutImage (XDisplay, RenderTargetTexture->Image, Window_->WinGCAndInvert, ImgMask,//
+                         0, 0, x, y, RecSource.Width, RecSource.Height);
               // Copy new coloured Mask into Dest (using OR)
-              SetGCFunction (Window_, RenderTargetTexture->gc, GXor);
-              XPutImage (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, ImgMask2,
-                         0, 0, RecDest.x, RecDest.y,
-                         RecDest.Width, RecDest.Height);
+              //@@@@SetGCFunction (Window, RenderTargetTexture->gc, GXor);
+              //@@@@SetGCFunction (Window, Window_->WinGC, GXor);
+              //@@@@XPutImage (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, Img_,
+              XPutImage (XDisplay, RenderTargetTexture->Image, Window_->WinGCOr, Img_,//
+                         0, 0, x, y, RecSource.Width, RecSource.Height);
+              // Modify DestMask (using OR)
+              //@@@@SetGCFunction (Window, RenderTargetTexture->gc, GXor);
+              //@@@@SetGCFunction (Window, Window_->WinGC, GXor);
+              if (RenderTargetTexture->Mask && ImgMask)
+                //@@@@XPutImage (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gc, ImgMask,
+                XPutImage (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr, ImgMask,//
+                           0, 0, x, y, RecSource.Width, RecSource.Height);
+              Time3 += ClockuS () - Tick3; //####
+              // free stuff
+              BitmapDestroy (Img_);
+              BitmapDestroy (ImgMask);
+              // Restore gc
+              //@@@@SetGCFunction (Window, RenderTargetTexture->gc, GXcopy);
+              //@@@@SetGCFunction (Window, Window_->WinGC, GXcopy);
             }
           else
             {
-              SetGCFunction (Window_, RenderTargetTexture->gc, GXcopy);  // not needed
-              XPutImage (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, Img2,
-                         0, 0, RecDest.x, RecDest.y,
-                         RecDest.Width, RecDest.Height);
+              // Put on "screen"
+              int Tick3 = ClockuS ();//####
+              //SetGCFunction (Window, RenderTargetTexture->gc, GXcopy);  // not needed
+              //@@@@XPutImage (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, Img,
+              XPutImage (XDisplay, RenderTargetTexture->Image, Window_->WinGCCopy, Img,
+                         RecSource.x, RecSource.y, x, y, RecSource.Width, RecSource.Height);
+              // Modify DestMask (using OR)
               if (RenderTargetTexture->Mask)
-                XFillRectangle (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask,
-                                RecDest.x, RecDest.y,
-                                RecDest.Width, RecDest.Height);
+                //@@@@XFillRectangle (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask,
+                XFillRectangle (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr,
+                                x, y, RecSource.Width, RecSource.Height);
+              Time3 += ClockuS () - Tick3;//####
             }
-          // Modify DestMask (using OR)
-          SetGCFunction (Window_, RenderTargetTexture->gc, GXor);
-          if (RenderTargetTexture->Mask && ImgMask1)
-            XPutImage (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, ImgMask1,
-                       0, 0, RecDest.x, RecDest.y,
-                       RecDest.Width, RecDest.Height);
-          // Restore gc & free stuff
-          SetGCFunction (Window_, RenderTargetTexture->gc, GXcopy);
-          if (Img2)
-            BitmapDestroy (Img2);
-          if (ImgMask1)
-            BitmapDestroy (ImgMask1);
-          if (ImgMask2)
-            BitmapDestroy (ImgMask2);
+          Time1 += ClockuS () - Tick1;//####
           return true;
         }
     return false;
   }
 
-extern _Bitmap* BitmapFromTexture (_Window *Window, _Texture *Texture, int Width, int Height)
+bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, int ColTransparent)
   {
-    //__Window *Window_;
+    __Window *Window_;
+    XImage *Img1, *Img2;
+    int xs, ys, xd, yd;
+    int a;
+    bool get, put;
+    int pixel;
+    bool Res;
+    //
+    Res = false;
+    Window_ = (__Window *) Window;
+    Img1 = (XImage *) Bitmap;
+    Img2 = NULL;
+    if (Bitmap)
+      if ((RecDest.Width > 0) && (RecDest.Height > 0))
+        {
+          if (RecSource.Width == RecDest.Width && RecSource.Height == RecDest.Height)   // Same size
+            Res = RenderBitmap (Window_, Img1, RecSource, RecDest.x, RecDest.y, ColTransparent);
+          else   // Bitmap needs resizing
+            {
+              // Generate Scaled Image
+              Img2 = (XImage *) BitmapCreate (Window, RecDest.Width, RecDest.Height);
+              xs = ys = 0;
+              xd = yd = 0;
+              get = put = true;
+              while (true)
+                {
+                  if (get & put)
+                    {
+                      get = false;
+                      pixel = XGetPixel (Img1, RecSource.x + xs, RecSource.y + ys);
+                    }
+                  if (put)
+                    {
+                      put = false;
+                      XPutPixel (Img2, xd, yd, pixel);
+                    }
+                  a = (xs+1) * RecDest.Width - (xd+1) * RecSource.Width;
+                  if (a <= 0)
+                    {
+                      xs++;
+                      get = true;
+                    }
+                  if (a >= 0)
+                    {
+                      xd++;
+                      put = true;
+                    }
+                  if (xs >= RecSource.Width && get)
+                    {
+                      get = put = true;
+                      xs = 0;
+                      xd = 0;
+                      a = (ys+1) * RecDest.Height - (yd+1) * RecSource.Height;
+                      if (a <= 0)
+                        {
+                          ys++;
+                          get = true;
+                        }
+                      if (a >= 0)
+                        {
+                          yd++;
+                          put = true;
+                        }
+                      if (ys >= RecSource.Height && get)
+                        break;
+                    }
+                }
+              // Now put on "screen"
+              Res = RenderBitmap (Window_, Img2, {0, 0, RecDest.Width, RecDest.Height}, RecDest.x, RecDest.y, ColTransparent);
+            }
+          // Free stuff
+          if (Img2)
+            BitmapDestroy (Img2);
+        }
+    return Res;
+  }
+
+_Bitmap* BitmapFromTexture (_Window *Window, _Texture *Texture, int Width, int Height)
+  {
     __Texture *Texture_;
     //
-    //Window_ = (__Window *) Window;
     Texture_ = (__Texture *) Texture;
     if (Texture_ && Texture_->Image)
       return (_Bitmap *) XGetImage (XDisplay, Texture_->Image, 0, 0, Width, Height, 0xFFFFFF, ZPixmap);
@@ -1145,25 +1224,3 @@ int main (int argc, char* args [])
   {
     return main_ (argc, args);
   }
-
-
-////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////
-
-/*
-char **GetFontList (_Window *Window, int *NumFonts)
-  {
-    return NULL;
-    return XListFonts (((__Window *) Window)->XDisplay, "*", 1000, NumFonts);
-  }
-
-void FreeFontList (char ** List)
-  {
-    if (List)
-      XFreeFontNames (List);
-  }
-*/

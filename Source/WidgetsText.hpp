@@ -4,9 +4,12 @@
 //
 // Author: Stewart Tunbridge, Pi Micros
 // Email:  stewarttunbridge@gmail.com
-// Copyright (c) 2024 Stewart Tunbridge, Pi Micros
+// Copyright (c) 2000-20025 Stewart Tunbridge, Pi Micros
 //
 /////////////////////////////////////////////////////////////////////////
+
+extern int ItalicSlope;
+extern bool ForceMonochrome;
 
 // FONT STYLES
 #define fsNone 0x00

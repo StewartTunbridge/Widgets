@@ -11,10 +11,14 @@
 
 #include "WidgetsDriver.hpp"
 
+#define JPGPNG
+
 #include <stdint.h>
+#ifdef JPGPNG
 #include <png.h>
 #include <jpeglib.h>
 #include <jerror.h>
+#endif // JPGPNG
 
 extern void DebugAdd (const char *St);
 extern void DebugAddS (const char *s1, const char *s2);
@@ -139,7 +143,7 @@ _Bitmap *LoadBMP (_Window *Window, char *Filename)
 
 _Bitmap *LoadPNG (_Window *Window, char *Filename)
   {
-    #ifdef _Windows
+    #ifndef JPGPNG
     return nullptr;
     #else
     _Bitmap *Img;
@@ -217,7 +221,7 @@ typedef enum {jfRGB, jfRGBA} _JpegFormat;
 
 _Bitmap *LoadJPEG (_Window *Window, char* FileName)
   {
-    #ifdef _Windows
+    #ifndef JPGPNG
     return nullptr;
     #else
     _Bitmap *Img;
@@ -329,20 +333,23 @@ bool SaveBMP (_Window *Window, _Bitmap *Bitmap, char *Filename)
     BMPFileHeader file_header;
     BMPInfoHeader info_header;
     int Width, Height;
-    int x, y, Size, Pixel;
+    int x, y, Pixel;
+    int SizeScan, SizePixelData;
     byte *Pixels, *p, *pp;
-    FILE* fp;
+    int Index;
+    int file;//FILE* fp;
     //
     if (!BitmapGetSize (Bitmap, &Width, &Height))
       return false;   // Can't get size
-    Size = Width * Height * 3;
+    SizeScan = (Width * 3 + 3) & ~3;
+    SizePixelData = SizeScan * Height;
     // Initialize file header
     file_header.bfType [0] = 'B';
     file_header.bfType [1] = 'M';
-    file_header.bfSize = sizeof (BMPFileHeader) + sizeof (BMPInfoHeader) + Size; // file size
+    file_header.bfSize = sizeof (BMPFileHeader) + sizeof (BMPInfoHeader) + SizePixelData; // file size
     file_header.bfReserved1 = 0;
     file_header.bfReserved2 = 0;
-    file_header.bfOffBits = sizeof(BMPFileHeader) + sizeof (BMPInfoHeader); // offset to pixel data
+    file_header.bfOffBits = sizeof (BMPFileHeader) + sizeof (BMPInfoHeader); // offset to pixel data
     // Initialize info header
     info_header.biSize = sizeof (BMPInfoHeader);
     info_header.biWidth = Width;
@@ -350,43 +357,47 @@ bool SaveBMP (_Window *Window, _Bitmap *Bitmap, char *Filename)
     info_header.biPlanes = 1;
     info_header.biBitCount = 24; // 24-bit RGB
     info_header.biCompression = 0; // uncompressed
-    info_header.biSizeImage = Width * Height * 3; // size of pixel data
+    info_header.biSizeImage = SizePixelData; //Width * Height * 3; // size of pixel data
     info_header.biXPelsPerMeter = 0;
     info_header.biYPelsPerMeter = 0;
     info_header.biClrUsed = 0;
     info_header.biClrImportant = 0;
     // Open file for writing
-    fp = fopen (Filename, "wb");
-    if (!fp)
+    file = FileOpen (Filename, foWrite);//fp = fopen (Filename, "wb");
+    if (file < 0)//(!fp)
       return false;   // Can't open file
     // Write file header
-    fwrite (&file_header, sizeof (BMPFileHeader), 1, fp);
+    FileWrite (file, (byte *) &file_header, sizeof (BMPFileHeader)); //fwrite (&file_header, sizeof (BMPFileHeader), 1, fp);
     // Write info header
-    fwrite (&info_header, sizeof (BMPInfoHeader), 1, fp);
+    FileWrite (file, (byte *) &info_header, sizeof (BMPInfoHeader)); //fwrite (&info_header, sizeof (BMPInfoHeader), 1, fp);
     // Write pixel data
-    Pixels = (byte *) malloc (Width * Height * 3);
+    Pixels = (byte *) malloc (SizePixelData);
     if (!Pixels)
       return false;
     p = Pixels;
     for (y = Height - 1; y >= 0; y--)
-      for (x = 0; x < Width; x++)
-        {
-          Pixel = BitmapGetPixel (Bitmap, x, y);
-          pp = (byte *) &Pixel;
-          *p++ = pp [2];
-          *p++ = pp [1];
-          *p++ = pp [0];
-        }
-    fwrite (Pixels, Size, 1, fp);
+      {
+        Index = 0;
+        for (x = 0; x < Width; x++)
+          {
+            Pixel = BitmapGetPixel (Bitmap, x, y);
+            pp = (byte *) &Pixel;
+            p [Index++] = pp [2];
+            p [Index++] = pp [1];
+            p [Index++] = pp [0];
+          }
+        p += SizeScan;
+      }
+    FileWrite (file, Pixels, SizePixelData); //fwrite (Pixels, Size, 1, fp);
     free (Pixels);
     // Close file
-    fclose (fp);
+    FileClose (file); //fclose (fp);
     return true;
   }
 
 bool SavePNG (_Window *Window, _Bitmap *Bitmap, char *Filename)
   {
-    #ifdef _Windows
+    #ifndef JPGPNG
     return false;
     #else
     int Width, Height;
@@ -439,14 +450,14 @@ bool SavePNG (_Window *Window, _Bitmap *Bitmap, char *Filename)
                 for (y = 0; y < Height; y++)
                   png_free (png_ptr, row_pointers [y]);
                 png_free (png_ptr, row_pointers);
-                return true;
               }
             png_destroy_write_struct (&png_ptr, &info_ptr);
           }
         fclose (fp);
-     }
+        return true;
+      }
     return false;
-    #endif // _Windows
+    #endif
   }
 
 bool SaveJPEG (_Window *Window, _Bitmap *Bitmap, char *Filename)

@@ -221,25 +221,34 @@ void _GridView::DrawCustom (void)
     _Rect RectCell;
     int c1, c2;
     int x2;
-    _Font *Font;
+    _Font *Font_;
+    byte Style;
     //
-    /* char s [80], *ps;
-    if (DrawCells0.x >= 0)
+    /*char s [80], *ps;
+    ps = s;
+    StrCat (&ps, "DrawCells: ");
+    if (DrawCells0.x < 0)
+      StrCat (&ps, "ALL");
+    else
       {
-        ps = s;
-        StrCat (&ps, "DrawCells: ");
         PointToStr (&ps, DrawCells0);
         StrCat (&ps, " - ");
         PointToStr (&ps, DrawCells1);
-        *ps = 0;
-        DebugAdd (s);
-      } */
+      }
+    *ps = 0;
+    DebugAdd (s);*/
     //
+    int tick = ClockMS (); //####
     ColLockBG = Parent->ColourFind ();
     ColGrid = ColourAdjust (cForm1, 150);
     ColGridFocus = ColourAdjust (ColourTextFind (), 140);
     ColSelBG = cSelected;
-    Font = FontFind ();
+    Font_ = FontFind ();
+    if (!Font_)
+      return;
+    Style = Font_->Style;
+    if (Colour >= 0 && ColourGrad < 0)   // Solid background
+      Font_->Style |= fsFillBG;
     Posn = {0, 0};
     ScrollBars = 0;
     if (CellOffset.x)
@@ -248,10 +257,10 @@ void _GridView::DrawCustom (void)
       ScrollBars |= sbVert;
     while (true)
       {
-        Font->ColourBG = ColourFind ();
+        Font_->ColourBG = ColourFind ();
         Ind = CellGridPosnToIndex (Posn);
         RectCell = CellRect (Posn);
-        if (Ind.x >= Columns || RectCell.x > Rect.Width)
+        if (Ind.x >= Columns || RectCell.x >= Rect.Width)
           {
             if (Ind.x < Columns)
               ScrollBars |= sbHorz;
@@ -274,7 +283,7 @@ void _GridView::DrawCustom (void)
               {
                 DrawRectangle (RectCell, -1, -1, ColLockBG);
                 DrawBorder (RectCell, bRaised, ColLockBG, 0);
-                Font->ColourBG = ColLockBG;
+                Font_->ColourBG = ColLockBG;
               }
             else
               {
@@ -286,7 +295,7 @@ void _GridView::DrawCustom (void)
                     if (CellInSelection (Ind))   // Current multiple selection
                       {
                         DrawRectangle (RectCell, -1, -1, ColSelBG);
-                        Font->ColourBG = ColSelBG;
+                        Font_->ColourBG = ColSelBG;
                       }
                     else if (RenderFlags & rRedrawPart)
                       DrawRectangle (RectCell, -1, -1, ColourFind ());
@@ -309,15 +318,17 @@ void _GridView::DrawCustom (void)
                   }
               }
             // Draw Cell user contents
+            RectCell.x += 1;
+            RectCell.Width -= 2;
             if (ActionCellDraw)
               ActionCellDraw (this, Ind.x, Ind.y, RectCell);
           }
         Posn.x++;
       }
+    Font_->Style = Style;
     ScrollBarsDraw (ScrollBars, CellOffset, {Columns - Locked.x, Rows - Locked.y});
-    //Posn = CellAtXY (Rect.Width - 1, Rect.Height - 1);
-    //ScrollBarsDraw ({CellOffset.x + Locked.x, CellOffset.y + Locked.y}, CellGridPosnToIndex (Posn), Locked, {Columns - 1, Rows - 1});
     DrawCellsClear ();
+    DebugAdd ("Grid Draw time (mS) ", ClockMS () - tick); //####
   }
 
 bool _GridView::ProcessEventCustom (_Event *Event, _Point Offset)
@@ -464,8 +475,8 @@ bool _GridView::ProcessEventCustom (_Event *Event, _Point Offset)
               }
           }
       }
-    Limit (&Index1.x, Title.x, Columns - 1);
-    Limit (&Index1.y, Title.y, Rows - 1);
+    Index1.x = Limit (Index1.x, Title.x, Columns - 1);
+    Index1.y = Limit (Index1.y, Title.y, Rows - 1);
     if (~Options & goSelectMulti)
       Index0 = Index1;
     if (Options & goSelectLine)
@@ -487,8 +498,8 @@ bool _GridView::ProcessEventCustom (_Event *Event, _Point Offset)
               Form->EventLock = Edit;
             }
         }
-    Limit (&CellOffset.x, 0, Columns - Locked.x - 1);
-    Limit (&CellOffset.y, 0, Rows - Locked.y - 1);
+    CellOffset.x = Limit (CellOffset.x, 0, Columns - Locked.x - 1);
+    CellOffset.y = Limit (CellOffset.y, 0, Rows - Locked.y - 1);
     if (CellOffset.x != CellOffsetOld.x || CellOffset.y != CellOffsetOld.y)
       Invalidate (true);
     else if ((Index1.x != Index1Old.x || Index1.y != Index1Old.y) || (Index0.x != Index0Old.x || Index0.y != Index0Old.y))

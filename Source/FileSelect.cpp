@@ -16,7 +16,7 @@
 class _FormFileSelect: public _Form
   {
     public:
-      _FormFileSelect (char *Title, _Rect Position, char *Filter, bool AllowNewFile);
+      _FormFileSelect (char *Title, _Rect Position, char *Filter, bool SaveFile);
       ~_FormFileSelect (void);
       _Label *lPath;
       _Container *cToolbar;
@@ -25,7 +25,7 @@ class _FormFileSelect: public _Form
       _GridView *Grid;
       void DirFill (void);
       //
-      bool AllowNewFile_;
+      bool SaveFile_;
       _DirItem *Dir;
       int Index = -1;
       _DirItem *di;
@@ -85,7 +85,7 @@ char* FilesRead (_GridView *Grid, int x, int y)
           fFileSelect->DirFill ();
         }
       else
-        if (fFileSelect->AllowNewFile_)
+        if (fFileSelect->SaveFile_)
           fFileSelect->eNewFilename->TextSet (fFileSelect->di->Name);
         else
           {
@@ -117,7 +117,7 @@ void ActionFileSelectSave (_Container *Container)
         }
   }
 
-_FormFileSelect::_FormFileSelect (char *Title, _Rect Position, char *Filter, bool AllowNewFile)
+_FormFileSelect::_FormFileSelect (char *Title, _Rect Position, char *Filter, bool SaveFile)
                : _Form (Title, Position, waAlwaysOnTop | waResizable)
   {
     int y;
@@ -125,11 +125,11 @@ _FormFileSelect::_FormFileSelect (char *Title, _Rect Position, char *Filter, boo
     Result = NULL;
     Dir = NULL;
     FileSelectFilter = Filter;
-    AllowNewFile_ = AllowNewFile;
+    SaveFile_ = SaveFile;
     Container->FontSet ("ARI.ttf", 14);
     y = 0;
     lPath = new _Label (Container, {4, y, 0, 24}, NULL); y += lPath->Rect.Height;
-    if (AllowNewFile)
+    if (SaveFile)
       {
         cToolbar = new _Container (Container, {0, y, 0, 32}); y += cToolbar->Rect.Height;
         eNewFilename = new _Edit (cToolbar, {4, 0, cToolbar->Rect.Width - 64 - 4, 0}, NULL);
@@ -196,7 +196,7 @@ _FormFileSelect::~_FormFileSelect (void)
     fFileSelect = NULL;
   }
 
-bool FileSelect (char **Name, char *Filter, bool AllowNewFile)   // caller must free Name
+bool FileSelect (char **Name, char *Filter, bool SaveFile)   // caller must free Name
   {
     bool Res;
     //
@@ -204,7 +204,7 @@ bool FileSelect (char **Name, char *Filter, bool AllowNewFile)   // caller must 
     *Name = NULL;
     if (!fFileSelect)
       {
-        fFileSelect = new _FormFileSelect ("Select File", {50, 50, 600, 400}, Filter, AllowNewFile);
+        fFileSelect = new _FormFileSelect ("Select File", {50, 50, 600, 400}, Filter, SaveFile);
         while (true)
           {
             if (FormsUpdate ())
@@ -213,7 +213,8 @@ bool FileSelect (char **Name, char *Filter, bool AllowNewFile)   // caller must 
               break;
             if (fFileSelect->Result)
               {
-                StrForceExtension (fFileSelect->Result, Filter);
+                if (Filter)
+                  StrForceExtension (fFileSelect->Result, Filter);
                 StrAssignCopy (Name, fFileSelect->Result);
                 Res = true;
                 break;

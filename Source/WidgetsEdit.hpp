@@ -32,15 +32,15 @@ class _EditCommon: public _Container
       int TextLen;
       bool Multiline;
       _Point Posn;
-      int IndexLine;
-      int IndexSel [2];
+      int IndexLine;   // Index of Start of Current Line
+      int IndexSel [2];   // Index of current Selection
       int KeyPrev;
       int RedrawFrom, RedrawTo;
       virtual void DrawCustom (void);
       virtual bool ProcessEventCustom (_Event *Event, _Point Offset);
       //
       bool Move (int Movement);
-      int LineLength ();
+      int LineLength (void);
       void Insert (int Pos, int Size, char *St);
       void Delete (int Pos, int Size);
       void FindChar (int x, int y);

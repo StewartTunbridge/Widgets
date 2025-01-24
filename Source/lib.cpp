@@ -4,7 +4,7 @@
 //
 // Author: Stewart Tunbridge, Pi Micros
 // Email:  stewarttunbridge@gmail.com
-// Copyright (c) 2024 Stewart Tunbridge, Pi Micros
+// Copyright (c) 2000, 2025 Stewart Tunbridge, Pi Micros
 //
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -1039,6 +1039,13 @@ void StrAppend (char *Dest, char Ch)
     *Dest = 0;
   }
 
+void StrAppend (char *Dest, char *St)
+  {
+    Dest = StrPos (Dest, (char) 0);
+    StrCat (&Dest, St);
+    *Dest = 0;
+  }
+
 // Filenames
 
 char *StrFindFileExtension (char *FileName)
@@ -1112,7 +1119,7 @@ int Abs (int a)
     if (a >= 0)
       return a;
     return -a;
-  }*/
+  }
 
 void Limit (int *Value, int MinValue, int MaxValue)
   {
@@ -1120,7 +1127,7 @@ void Limit (int *Value, int MinValue, int MaxValue)
       *Value = Min (Max (*Value, MinValue), MaxValue);
     else
       *Value = MinValue;
-  }
+  }*/
 
 int Sqr (int x)
   {
@@ -1180,23 +1187,23 @@ float Sqrt (float a)
     return x;
   }
 
-float Sin (float deg)
+float Sin (float Rad)
   {
     float res;
-    float rad;
     float num, den;
     int i;
     //
-    while (deg > 360.0)
-      deg = deg - 360.0;
-    rad = deg * Pi / 180.0;
+    while (Rad >= 2 * Pi)
+      Rad -= 2 * Pi;
+    while (Rad < 0)
+      Rad += 2 * Pi;
     num = 1.0;
     den = 1.0;
     res = 0.0;
     i = 1;
     while (num / den > FloatError)
       {
-        num *= rad;  // calculate succesive powers of x
+        num *= Rad;  // calculate succesive powers of x
         den *= i;   // calculate succesive factorials
         if (i & 1)   // odd: 1, 3, 5 ...
           if (i & 2)  // every 2nd odd: 3, 7, 11 ...
@@ -1208,9 +1215,19 @@ float Sin (float deg)
     return res;
   }
 
-float Cos (float deg)
+float Cos (float Rad)
   {
-    return Sin (deg + 90.0);
+    return Sin (Rad + Pi / 2);
+  }
+
+float SinDeg (float deg)
+  {
+    return Sin (deg * Pi / 180.0);
+  }
+
+float CosDeg (float deg)
+  {
+    return SinDeg (deg + 90.0);
   }
 
 int Round (float x)
@@ -1233,6 +1250,18 @@ int ClockMS (void)   // milli seconds since ?
     //
     gettimeofday (&t, NULL);
     return (t.tv_sec * 1000) + (t.tv_usec / 1000);
+#endif
+  }
+
+int ClockuS (void)   // micro seconds since ?
+  {
+#ifdef _Windows
+    return GetTickCount () * 1000;
+#else
+    struct timeval t;
+    //
+    gettimeofday (&t, NULL);
+    return (t.tv_sec * 1000000) + (t.tv_usec);
 #endif
   }
 
@@ -1715,6 +1744,19 @@ bool FileWrite (int File, byte *Data, int DataSize)
       if (write (File, Data, DataSize) == DataSize)
         return true;
     return false;
+  }
+
+bool FileWriteLine (int File, char *St)
+  {
+    char eol;
+    bool Res;
+    //
+    Res = false;
+    eol = '\n';
+    if (FileWrite (File, (byte *) St, StrLen (St)))
+      if (FileWrite (File, (byte *) &eol, 1))
+        Res = true;
+    return Res;
   }
 
 void ForcePath (char *Path)

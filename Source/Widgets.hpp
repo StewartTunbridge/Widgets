@@ -16,12 +16,15 @@
 #include "WidgetsDriver.hpp"
 #include "WidgetsText.hpp"
 
+extern bool DebugDisplayContainers;
+extern int Time1, Time2, Time3;   // Performance measurement
+
+extern void PointToStr (char **St, _Point Point);
 extern void DebugAdd (const char *St);   // defined in application
 extern void DebugAddS (const char *s1, const char *s2);   // defined in Widgets.cpp
 extern void DebugAdd (const char *St, int n);   // "
 extern void DebugAddP (const char *St, _Point p);   // "
 extern void DebugAddR (const char *St, _Rect *r);   // "
-
 
 extern _Rect AddMargin (_Rect Rect, _Point Margin);
 
@@ -166,7 +169,7 @@ class _Container
       _Point SizeVirtual;   // Size for scrollable Containers
       _Point Scroll;   // Displacement for scrolling regions
       //bool DrawBackgroundInhibit;   // Special case when partial drawing required
-      byte RectLock;   // Adjust container automagically or Parent resize. See rl*
+      byte RectLock;   // Adjust container automagically on Parent resize. See rl*
       _Container *Children;
       int Colour, ColourGrad;   // Colours (-1 transparent). set Grad for graded colour
       int ColourText;
@@ -180,7 +183,7 @@ class _Container
       int DataInt;
       //
       _Container (_Container *Parent_, _Rect Rect_, char *Text_ = NULL, int PagingTime_ = 0, int PagingTransitionTime_ = 0, _PagingTransitionMode PagingTransitionMode_ = ptmBlend);
-        // Rect_: To use Parent Width/Height specify 0
+        // Rect_: To use Parent Width/Height specify 0. This also sets bits RectLock
       virtual ~_Container (void);
       bool Resize (int Width, int Height);
       char* TextGet (void);   // Get the Container's Text
@@ -202,7 +205,7 @@ class _Container
       bool RenderTarget_ (_Texture *Texture, _Point Offset, int Colour, _Rect Clip);
       void TextOutAligned (_Font *Font, _Rect Rect, char *Text, _Align Align, _Align AlignVert);   // Find Font, Draw Text
       void TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert);
-      void TextOutWrapReverse (_Rect Rect, char *St, _Align Align, _Point Margin);   // Inverse for Menus etc
+      void TextOutWrapInverse (_Rect Rect, char *St, _Align Align, _Point Margin);   // Inverse for Menus etc
       int BorderColourTL (int ColourReference);
       int BorderColourBR (int ColourReference);
       void DrawBorder (_Rect Rect, _Border Border, int ColourReference, int Indent = 0);

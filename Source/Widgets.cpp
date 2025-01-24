@@ -18,6 +18,9 @@
 #include "Widgets.hpp"
 #include "WidgetsDriver.hpp"
 
+bool DebugDisplayContainers = false;
+int Time1, Time2, Time3;   // Performance measurement
+
 // THEME
 int cForm1 = 0xE8E8E8; //0xC0C0C0;
 int cForm2 = 0xC0C0C0; //-1;
@@ -239,6 +242,13 @@ int GetBitmapIndex (char **St)
     return Res;
   }
 
+bool RenderBitmapTransparentTL (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest)
+  {
+    if (Bitmap)
+      return RenderBitmap (Window, Bitmap, RecSource, RecDest, BitmapGetPixel (Bitmap, RecSource.x, RecSource.y));
+    return false;
+  }
+
 int DrawTextBitmap (_Window *Window, int Index, int x, int y, int FontHeight)
   {
     int Res;
@@ -254,7 +264,7 @@ int DrawTextBitmap (_Window *Window, int Index, int x, int y, int FontHeight)
               {
                 if (FontHeight > bh)
                   y += (FontHeight - bh) / 2;
-                RenderBitmap (Window, TextCallBackBitmap, {Index * bh, 0, bh, bh}, {x, y, bh, bh}, true);
+                RenderBitmapTransparentTL (Window, TextCallBackBitmap, {Index * bh, 0, bh, bh}, {x, y, bh, bh});
               }
             Res = bh;
           }
@@ -269,6 +279,7 @@ bool EditLinesTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *P
     int bsz;
     static bool Selected = false;
     static int ColBG;
+    static byte Style;
     bool Selected_;
     //
     // Cursor?
@@ -294,7 +305,7 @@ bool EditLinesTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *P
             Size->y = Max (Size->y, bsz);
           }
       }
-    // Selection
+    // Selection?
     if (Window && Posn)
       {
         if (TextCallBackSelection [0] == nullptr)
@@ -304,21 +315,22 @@ bool EditLinesTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *P
             Selected_ = (*Text >= TextCallBackSelection [0] && *Text < TextCallBackSelection [1]);
           else
             Selected_ = (*Text >= TextCallBackSelection [1] && *Text < TextCallBackSelection [0]);
-        if (Selected_ != Selected)
+        if (Selected_)
           {
-            Selected = Selected_;
-            if (Selected)
+            if (!Selected)
               {
                 ColBG = Font->ColourBG;
-                Font->ColourBG = cSelected;
-                Font->Style |= fsFillBG ;
+                Style = Font->Style;
               }
-            else
-              {
-                Font->ColourBG = ColBG;
-                Font->Style &= ~fsFillBG;
-              }
+            Font->ColourBG = cSelected;
+            Font->Style |= fsFillBG;
           }
+        else if (Selected)
+          {
+            Font->ColourBG = ColBG;
+            Font->Style = Style;
+          }
+        Selected = Selected_;
       }
     return true;
   }
@@ -407,7 +419,6 @@ _Form::~_Form (void)
         free (CurrentPath);
         free (Filename_);
       }
-    //Unlink (&FormList);
   }
 
 void _Form::Die (void)
@@ -929,6 +940,7 @@ void _Container::Draw (bool Force, _Point Offset)
           Texture = TextureCreate (Form->Window, Rect.Width, Rect.Height);
         if (RenderFlags & (rRedraw) || Force)
           {
+            //DebugAddS ("Draw ", Text);//####
             RenderTarget_ (Texture, Offset, ColourFind (), {Offset.x, Offset.y, Rect.Width, Rect.Height});
             // Draw the background
             if (~RenderFlags & rRedrawPart)
@@ -975,7 +987,8 @@ void _Container::Draw (bool Force, _Point Offset)
 
 void _Container::DrawCustom (void)
   {
-    //DrawRectangle ({0, 0, Rect.Width, Rect.Height}, cRed, cRed, -1);//####
+    if (DebugDisplayContainers)
+      DrawRectangle ({0, 0, Rect.Width, Rect.Height}, cRed, cRed, -1);
   }
 
 bool _Container::FontSet (char *FontFile, int Size, byte Style)
@@ -1369,8 +1382,8 @@ _Point _Container::TextMeasure (_Font *Font_, char *Text)
     return TextSize (Font_, Text);
   }
 
-const int OutlineX [] = {-1,  1, -1, 1,  -1, 1,  0, 0}; //{0, 2, 0, 2};
-const int OutlineY [] = {-1, -1,  1, 1,   0, 0, -1, 1}; //{0, 0, 2, 2};
+//const int OutlineX [] = {-1,  1, -1, 1,  -1, 1,  0, 0}; //{0, 2, 0, 2};
+//const int OutlineY [] = {-1, -1,  1, 1,   0, 0, -1, 1}; //{0, 0, 2, 2};
 
 void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Align, _Align AlignVert)
   {
@@ -1396,9 +1409,9 @@ void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Al
         Font_->Colour = ColourAverage (Font_->Colour, ColourFind ());
         Font_->Style &= ~(fsShadow | fsOutline);
       }
+    Size = TextMeasure (Font_, Text);
     if (Align != aLeft)
       {
-        Size = TextMeasure (Font_, Text);
         dX = Rect.Width - Size.x;
         if (Align == aRight)
           Rect.x += dX;
@@ -1412,10 +1425,13 @@ void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Al
       Rect.y += dY;
     if (cBG < 0)
       Font_->ColourBG = ColourFind ();
-    TextRender (Form->Window, Font_, Text, {Rect.x + RenderTargetOffset.x, Rect.y + RenderTargetOffset.y});
+    if (Font_->Style & fsRotate)
+      TextRender (Form->Window, Font_, Text, {Rect.x + RenderTargetOffset.x, Rect.y + Size.x - 1 + RenderTargetOffset.y});
+    else
+      TextRender (Form->Window, Font_, Text, {Rect.x + RenderTargetOffset.x, Rect.y + RenderTargetOffset.y});
     Font_->Colour = cFG;
     Font_->ColourBG = cBG;
-    Font_->Style |= stl & (fsShadow | fsOutline);
+    Font_->Style = stl; //|= stl & (fsShadow | fsOutline);
   }
 
 // Word wrap text out.  !Write => measure only
@@ -1502,21 +1518,27 @@ void _Container::TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align Align
   {
     _Font *Font;
     _Point Size;
-    int x, y;
+    int x, y, gapX, gapY;
     //
     Font = FontFind ();
     if (Font)
       if (Font->Style & fsRotate)
         {
           Size = TextMeasure (Font, Text);
-          x = (Rect.Width - Size.y) / 2;
-          y = (Rect.Height - Size.x) / 2;
+          gapX = (Rect.Width - Size.y);
+          gapY = (Rect.Height - Size.x);
+          x = Rect.x;
+          y = Rect.y;
           if (Align == aCenter)
-            TextOutAligned (Font, {Rect.x + x, Rect.y + y + Size.x, 0, 0}, Text, aLeft, aLeft);
+            y += gapY / 2;
           else if (Align == aLeft)
-            TextOutAligned (Font, {Rect.x + x, Rect.y + Rect.Height, 0, 0}, Text, aLeft, aLeft);
-          else if (Align == aRight)
-            TextOutAligned (Font, {Rect.x + x, Rect.y + Size.x, 0, 0}, Text, aLeft, aLeft);
+            y += gapY;
+          if (AlignVert == aCenter)
+            x += gapX / 2;
+          else if (AlignVert == aRight)
+            x += gapX;
+          TextOutAligned (Font, {x, y, 0, 0}, Text, aLeft, aLeft);
+          //DrawRectangle ({x, y, Size.y, Size.x}, cRed, cRed, -1); //####
         }
       else
         {
@@ -1536,20 +1558,21 @@ void _Container::TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align Align
         }
   }
 
-void _Container::TextOutWrapReverse (_Rect Rect, char *St, _Align Align, _Point Margin)
+void _Container::TextOutWrapInverse (_Rect Rect, char *St, _Align Align, _Point Margin)
   {
-    int cFG, cText;
+    int cFG, cBG, cText;
     _Font *Font_;
     //
     cText = ColourTextFind ();
     DrawRectangle ({0, Rect.y, Rect.Width, Rect.Height}, -1, -1, cText);//ColFont cSelected
     Font_ = FontFind ();
     cFG = Font_->Colour;
+    cBG = Font_->ColourBG;
     Font_->Colour = cText ^ cWhite;//cTextBgnd cTextHighlight
     Font_->ColourBG = cText;//ColFont cSelected
     TextOutWrap (AddMargin (Rect, Margin), St, Align, aCenter);
     Font_->Colour = cFG;
-    Font_->ColourBG = -1;
+    Font_->ColourBG = cBG;
   }
 
 void _Container::DrawLine (int x1, int y1, int x2, int y2, int Colour, int Width)
@@ -1848,8 +1871,8 @@ void _Container::DrawRadius (int x, int y, int Rad1, int Rad2, int Angle, int Co
   {
     float sin, cos;
     //
-    sin = Sin (Angle);
-    cos = Cos (Angle);
+    sin = SinDeg (Angle);
+    cos = CosDeg (Angle);
     DrawLine (x + Round (cos * Rad1), y - Round (sin * Rad1), x + Round (cos * Rad2), y - Round (sin * Rad2), Colour, Width);
   }
 
@@ -1909,7 +1932,7 @@ void _Container::DrawScrollBar (bool Vert, int Bar1, int Bar2)
     int i, j;
     //
     Col [0] = ColourAdjust (cForm1, 150);   // ColBG
-    Col [1] = ColourAdjust (cForm1, 70);   // ColBorder
+    Col [1] = ColourAdjust (cForm1, 60);   // ColBorder
     Col [2] = ColourAdjust (cForm1, 90);   // ColBar
     //
     if (Vert)
@@ -1930,7 +1953,7 @@ void _Container::DrawScrollBar (bool Vert, int Bar1, int Bar2)
       else
         DrawLine (j + i, Rect.Height - ScrollBarWidth + 3, j + i, Rect.Height - 4, Col [i % 3], 1);
     // corner
-    DrawRectangle ({Rect.Width - ScrollBarWidth, Rect.Height - ScrollBarWidth, ScrollBarWidth, ScrollBarWidth}, -1, -1, ColourFind ());
+    DrawRectangle ({Rect.Width - ScrollBarWidth, Rect.Height - ScrollBarWidth, ScrollBarWidth, ScrollBarWidth}, Col [1], Col [1], Col [2]); //ColourFind ());
   }
 
 void _Container::ScrollBarsDraw (byte Bars, _Point Value, _Point Content)
@@ -2156,8 +2179,8 @@ bool _Container::ScrollRegionBarsEvent (_Event *Event, _Point Offset)
           }
         if (Res)
           {
-            Limit (&Scroll.y, 0, SizeVirtual.y - Rect.Height + ScrollBarWidth);
-            Limit (&Scroll.x, 0, SizeVirtual.x - Rect.Width + ScrollBarWidth);
+            Scroll.y = Limit (Scroll.y, 0, SizeVirtual.y - Rect.Height + ScrollBarWidth);
+            Scroll.x = Limit (Scroll.x, 0, SizeVirtual.x - Rect.Width + ScrollBarWidth);
             //if (Scroll.x != ScrollOld.x || Scroll.y != ScrollOld.y)
             //  Invalidate (true);
           }
@@ -2212,7 +2235,10 @@ void _Container::DrawBitmap (_Bitmap *Bitmap, _Rect rSrc, _Rect rDest, bool Tran
   {
     rDest.x += RenderTargetOffset.x;
     rDest.y += RenderTargetOffset.y;
-    RenderBitmap (Form->Window, Bitmap, rSrc, rDest, Transparent);
+    if (Transparent)
+      RenderBitmapTransparentTL (Form->Window, Bitmap, rSrc, rDest);
+    else
+      RenderBitmap (Form->Window, Bitmap, rSrc, rDest, -1);
   }
 
 /*
@@ -2430,7 +2456,7 @@ void _ButtonRadio::DrawCustom (void)
     xCircle = 2 * r;
     if (Align == aRight)
       {
-        xText = TextMargin;
+        xText = 0;
         xCircle = Rect.Width - 2 * r;
       }
     TextOutWrap ({xText, 0, Rect.Width - 4 * r, Rect.Height}, Text, Align, aCenter);
@@ -2856,7 +2882,7 @@ bool _EditNumber::ProcessEventCustom (_Event *Event, _Point Offset)
             NewFocus = false;
           }
       }
-    Limit (&Value, 0, Max);
+    Value = Limit (Value, 0, Max);
     if (Value != ValueOld)
       {
         Invalidate (true);
@@ -3037,7 +3063,7 @@ bool _Knob::ProcessEventCustom (_Event *Event, _Point Offset)
           }
         else
           Res = false;
-        Limit (&Value, ValueMin, ValueMax);
+        Value = Limit (Value, ValueMin, ValueMax);
         if (Value != Value_)
           {
             Invalidate (true);
@@ -3106,7 +3132,7 @@ void _Wait::DrawCustom (void)
     for (i = 7; i > 0; i--)
       {
         c = ColourGraded (cb, cf, i, 7);
-        DrawCircle (x + Cos (((i + Counter) % 8) * 45) * (float) R, y + Sin (((i + Counter) % 8) * 45) * (float) R, r, -1, c);
+        DrawCircle (x + CosDeg (((i + Counter) % 8) * 45) * (float) R, y + SinDeg (((i + Counter) % 8) * 45) * (float) R, r, -1, c);
         //r = r - 1;
       }
   }
@@ -3154,6 +3180,8 @@ void _Image::DrawCustom (void)
       {
         HomeFilePath (Text);
         Bitmap = BitmapLoad (Form->Window, Filename_);
+        if (Bitmap == NULL)
+          DebugAddS ("Image: File not loaded: ", Filename_);
       }
     if (Bitmap)
       {
@@ -3272,7 +3300,7 @@ void _SelectionList::DrawCustom (void)
           break;
         Rec = {0, y, Rect.Width, ItemSize.y};
         if (i == Hovering)
-          TextOutWrapReverse (Rec, Item, Align, {ListMargin, 0});
+          TextOutWrapInverse (Rec, Item, Align, {ListMargin, 0});
         else
           TextOutWrap (AddMargin (Rec, {ListMargin, 0}), Item, Align, aCenter);
         free (Item);
@@ -3354,7 +3382,7 @@ void _Menu::DrawCustom (void)
       return;
     Rec = {0, 0, Rect.Width, Rect.Height};
     if (SelectionList)
-      TextOutWrapReverse (Rec, Name, aCenter, {ListMargin, 0});
+      TextOutWrapInverse (Rec, Name, aCenter, {ListMargin, 0});
     else
       TextOutWrap (Rec, Name, aCenter, aCenter);
   }

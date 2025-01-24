@@ -192,7 +192,7 @@ _EditCommon::_EditCommon (_Container *Parent, _Rect Rect, char *Text, _Action Ac
     IndexSel [0] = IndexSel [1] = 0;
     TextLen = StrLen (Text);
     Changed = false;
-    RedrawFrom = RedrawTo = 0;
+    RedrawFrom = RedrawTo = -1;
   }
 
 bool _EditCommon::Move (int Movement)
@@ -264,7 +264,7 @@ void _EditCommon::Delete (int Pos, int Size)
       }
   }
 
-int _EditCommon::LineLength ()
+int _EditCommon::LineLength (void)
   {
     int i;
     //
@@ -281,9 +281,9 @@ void _EditCommon::FindChar (int x, int y)
     int Line;
     //
     Font_ = FontFind ();
-    Line = y / Font_->YAdvance;
+    Line = Max (0, y / Font_->YAdvance);
     Move (Line - Posn.y);
-    Posn.x = Min (TextIndex (Font_, &Text [IndexLine], x), LineLength ());
+    Posn.x = Limit (TextIndex (Font_, &Text [IndexLine], x), 0, LineLength ());
   }
 
 _Point _EditCommon::CursorLocation (_Font *Font_)
@@ -304,12 +304,13 @@ int _EditCommon::DrawTextLine (_Font *Font_, int Index, int y)
     _Point Size;
     //
     if (RenderFlags & rRedrawPart)
-      DrawRectangle ({0, y, Rect.Width, Font_->YAdvance}, -1, -1, cTextBgnd);
+      DrawRectangle ({0, y, Rect.Width, Font_->YAdvance}, -1, -1, ColourFind ());//cTextBgnd);
     Size = TextMeasure (Font_, &Text [Index]);
     if (Multiline)
       TextOutAligned (Font_, {0, y, 0, 0}, &Text [Index], aLeft, aLeft);
     else
       TextOutAligned (Font_, {EditMargin, 0, Rect.Width, Rect.Height}, &Text [Index], aLeft, aCenter);
+    //DebugAdd ("Text Draw Line", Index);   // ####
     return Size.x;
   }
 
@@ -320,16 +321,26 @@ void _EditCommon::DrawCustom (void)
     int Line;
     int i;
     _Font *Font_;
+    byte Style;
     //
     if (!Text)
       return;
-    if (RenderFlags & rRedrawPart)
-      DebugAddP ("Redraw Lines - ", {RedrawFrom, RedrawTo}); //####
+    Time1 = Time2 = Time3 = 0;
+    int Tick = ClockMS ();//####
+    /*if (RenderFlags & rRedrawPart)
+      if (RedrawTo == -1)
+        DebugAdd ("Text Redraw Part - no range"); //####
+      else
+        DebugAddP ("Text Redraw Part Lines - ", {RedrawFrom, RedrawTo}); //####
     else
-      DebugAdd ("Redraw ALL"); //####
+      DebugAdd ("Text Redraw ALL"); //####
+    DebugAddP ("Text: IndexSelected ", {IndexSel [0], IndexSel [1]});*/ //####
     Font_ = FontFind ();
     if (Font_ == NULL)
       return;
+    Style = Font_->Style;
+    if (Colour >= 0 && ColourGrad < 0)   // Solid background
+      Font_->Style |= fsFillBG;
     if (Form->KeyFocus == this)
       TextCallBackCursor = &Text [IndexLine + Posn.x];
     TextCallBackSelection [0] = nullptr;
@@ -352,7 +363,7 @@ void _EditCommon::DrawCustom (void)
         Size.y += Font_->YAdvance;
         Line++;
         Index = LineNext (Text, Index);
-        if (Index == 0)
+        if (Index == 0 || !Multiline)
           break;
       }
     TextCallBackCursor = nullptr;
@@ -363,8 +374,14 @@ void _EditCommon::DrawCustom (void)
           SizeVirtual = Size;
           Invalidate (true);
         }
+    Font_->Style = Style;
     if (!Multiline)
       DrawBezel (2);
+    RedrawFrom = RedrawTo = -1;
+    DebugAdd ("Edit Draw time (mS) ", ClockMS () - Tick); //####
+    DebugAdd ("EditDraw RenderBitmap time (uS) ", Time1); //####
+    DebugAdd ("EditDraw RenderBitmap make trans masks time (uS) ", Time2); //####
+    DebugAdd ("EditDraw RenderBitmap put up img time (uS) ", Time3); //####
   }
 
 bool _EditCommon::ProcessKeyDown (_Event *Event, _Font *Font_)
@@ -445,7 +462,7 @@ bool _EditCommon::ProcessKeyDown (_Event *Event, _Font *Font_)
           }
         else if (Key == KeyEnd)
           {
-            if (KeyPrev == KeyEnd)
+            if (KeyPrev == KeyEnd)// && Multiline)
               while (true)
                 {
                   i = IndexLine;
@@ -528,6 +545,8 @@ bool _EditCommon::ProcessKeyDown (_Event *Event, _Font *Font_)
           Scroll.x = Cursor.x - Rect.Width + ScrollBarWidth;
       }
     KeyPrev = Key;   // keep this key for next time
+    if (Res)
+      DebugAddP ("Text Select ", {IndexSel [0], IndexSel [1]}); //#####
     return Res;
   }
 
@@ -555,7 +574,7 @@ bool _EditCommon::ProcessEventCustom (_Event *Event, _Point Offset)
         PosnOld = Posn;
         Sel [0] = IndexSel [0];
         Sel [1] = IndexSel [1];
-        RedrawFrom = RedrawTo = -1;
+        //RedrawFrom = RedrawTo = -1;
         Offset.x -= Scroll.x;
         Offset.y -= Scroll.y;
         if (!Multiline)
@@ -584,7 +603,7 @@ bool _EditCommon::ProcessEventCustom (_Event *Event, _Point Offset)
       }
     if (Res && (Posn.x != PosnOld.x || Posn.y != PosnOld.y || Changed))
       {
-        if (~RenderFlags & rRedraw)   // not already doing a full redraw (ie scroll, resize ...)
+        //if (~RenderFlags & rRedraw)   // not already doing a full redraw (ie scroll, resize ...)
           {
             RedrawAdd (PosnOld.y);
             Invalidate (true);
