@@ -63,6 +63,11 @@ int ColourToWinColour (int Colour)
     return (Colour & 0x00FF00) | (Colour >> 16) | ((Colour << 16) & 0xFF0000);
   }
 
+int WinColourToColour (int Colour)
+  {
+    return (Colour & 0x00FF00) | (Colour >> 16) | ((Colour << 16) & 0xFF0000);
+  }
+
 bool WidgetsInit (void)
   {
     return true;
@@ -315,7 +320,7 @@ int BitmapGetPixel (_Bitmap *Bitmap, int x, int y)
       {
         Bitmap_ = Bitmap;
         if (x < Bitmap_->Width && y < Bitmap_->Height)
-          return ColourToWinColour (Bitmap_->Pixels [y * Bitmap_->Width + x]);
+          return WinColourToColour (Bitmap_->Pixels [y * Bitmap_->Width + x]);
       }
     return 0;
   }
@@ -507,6 +512,7 @@ bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecD
   {
     __Window *Window_;
     __Bitmap *Bitmap_;
+    int cTrans;
     int sMax, dMax;
     int pixel;
     int is, id;
@@ -537,6 +543,7 @@ bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecD
               // Generate Scaled and Masked Images
               #define RenderStretch
               #ifdef RenderStretch
+              cTrans = ColourToWinColour (ColTransparent);
               xs = ys = 0;
               xd = yd = 0;
               get = put = true;
@@ -552,7 +559,7 @@ bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecD
                     {
                       put = false;
                       if (id + xd < dMax)
-                        if (pixel != ColTransparent)
+                        if (pixel != cTrans)
                           {
                             TargetTexture->Pixels [id + xd] = pixel;
                             if (TargetTexture->Mask)
