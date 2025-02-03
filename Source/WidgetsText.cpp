@@ -112,11 +112,11 @@ _Point FreeTypeMeasureString (char *St, _Font *Font, int *Index = NULL, int Sear
         if (Font->Style & (fsOutline | fsShadow))
           Font->Style |= fsNoGrayscale;
         Size.y = Font->YAdvance;
-        dx = CharWidthAdjustment (Font);
         while (true)
           {
             if (TextCallBack)
               TextCallBack (0, &St_, Font, NULL, &Size);
+            dx = CharWidthAdjustment (Font);
             if ((byte) *St_ < ' ')
               break;
             St__ = St_;
@@ -278,18 +278,18 @@ bool FreeTypeRenderString (_Window *Window, char *St, _Font *Font, _Point xy)
     ColourHL = cWhite;
     if (ColourR (Font->Colour) + ColourG (Font->Colour) + ColourB (Font->Colour) > 3 * 255 / 2)
       ColourHL = cBlack;
-    dx = CharWidthAdjustment (Font);
     acc = Max (1, (Font->Size + 5) / 16); //CharAccentSize (Font);
-    if (Font->Style & (fsOutline | fsShadow))
-      Font->Style |= fsNoGrayscale;
-    if (Font->Style & fsItalic)
-      FT_Set_Transform ((FT_Face) Font->Typeface, &Matrix, &Pen);
-    else
-      FT_Set_Transform ((FT_Face) Font->Typeface, NULL, &Pen);
     while (true)
       {
         if (TextCallBack)
           TextCallBack (Window, &St, Font, &xy, NULL);
+        if (Font->Style & (fsOutline | fsShadow))
+          Font->Style |= fsNoGrayscale;
+        if (Font->Style & fsItalic)
+          FT_Set_Transform ((FT_Face) Font->Typeface, &Matrix, &Pen);
+        else
+          FT_Set_Transform ((FT_Face) Font->Typeface, NULL, &Pen);
+        dx = CharWidthAdjustment (Font);
         if ((byte) *St < ' ')
           break;
         Ch_ = UTF8Read (&St);   // Read UTF8 character
@@ -318,16 +318,16 @@ bool FreeTypeRenderString (_Window *Window, char *St, _Font *Font, _Point xy)
             CopyGlyph (Window, Glyph, Font->Style, {xy.x, xy.y}, dx, Font->ColourBG, Font->Colour, Font->YOffset);
           }
         i = dx + Glyph->metrics.horiAdvance / FontScale; //GlyphWidth (Font, Glyph) + dx;
+        if (Font->Style & fsUnderline)
+          if (Font->Style & fsRotate)
+            RenderDrawLine (Window, Font->Colour, xy.x + Font->YOffset + 1, xy.y, xy.x + Font->YOffset + 1, xy.y - i);
+          else
+            RenderDrawLine (Window, Font->Colour, xy.x, xy0.y + Font->YOffset + 1, xy.x + i, xy.y + Font->YOffset + 1);
         if (Font->Style & fsRotate)
           xy.y -= i;
         else
           xy.x += i;
       }
-    if (Font->Style & fsUnderline)
-      if (Font->Style & fsRotate)
-        RenderDrawLine (Window, Font->Colour, xy0.x + Font->YOffset + 1, xy0.y, xy.x + Font->YOffset + 1, xy.y);
-      else
-        RenderDrawLine (Window, Font->Colour, xy0.x, xy0.y + Font->YOffset + 1, xy.x, xy.y + Font->YOffset + 1);
     return true;
   }
 

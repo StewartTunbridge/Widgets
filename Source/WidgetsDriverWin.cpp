@@ -15,6 +15,8 @@ extern void DebugAdd (const char *St);   // defined in application
 extern void DebugAddS (const char *s1, const char *s2);   // defined in Widgets.cpp
 extern void DebugAdd (const char *St, int n);
 extern void DebugAddR (const char *St, _Rect *r);
+extern void DebugAddP (const char *St, _Point pnt);
+extern void DebugAddInt (const char *St, int n);   // "
 
 WNDCLASS wc;
 
@@ -53,7 +55,7 @@ HINSTANCE WinhInstance = 0, WinhPrevInstance = 0;
 
 void ShowWindowsError (void)
   {
-    DebugAdd ("*** WINDOWS ERROR: ", GetLastError ());
+    DebugAddInt ("*** WINDOWS ERROR: ", GetLastError ());
   }
 
 int ColourToWinColour (int Colour)
@@ -71,9 +73,16 @@ bool WidgetsUninit (void)
     return true;
   }
 
+POINT Mouse;
+
+_Point MousePos (void)
+  {
+    return {Mouse.x, Mouse.y};
+  }
+
 void MouseCursor (_Window *Window, bool Show)
   {
-
+    //####
   }
 
 MSG Messages [256];
@@ -184,7 +193,8 @@ void WindowGetPosSize (_Window *Window, int *x, int *y, int *Width, int *Height)
     RECT Rect;
     //
     Window_ = Window;
-    GetClientRect (Window_->hWindow, &Rect);
+    if (!GetClientRect (Window_->hWindow, &Rect))
+      return;
     if (x)
       *x = Rect.left;
     if (y)
@@ -455,7 +465,6 @@ bool RenderTexture (_Window *Window, _Texture *Texture, _Rect RecSource, int Des
     __Texture *Texture_;
     int is, id;
     int dx, dy;
-    int i;
     //
     Window_ = Window;
     Texture_ = Texture;
@@ -786,6 +795,9 @@ void EventPoll (_Event *Event)
               {
                 x = Msg.lParam & 0xFFFF;
                 y = (Msg.lParam >> 16) & 0xFFFF;
+                Mouse.x = x;
+                Mouse.y = y;
+                ClientToScreen (Msg.hwnd, &Mouse);
               }
             Event->X = x;
             Event->Y = y;
@@ -800,9 +812,9 @@ void EventPoll (_Event *Event)
                 case WM_MBUTTONUP:   Event->Type = etMouseUp;   Event->Key = KeyMouseMiddle; break;
                 case WM_MOUSEWHEEL:  Event->Type = etMouseDown;
                                       if (Msg.wParam & 0x80000000)
-                                        Event->Key = KeyMouseWheelUp;
-                                      else
                                         Event->Key = KeyMouseWheelDown;
+                                      else
+                                        Event->Key = KeyMouseWheelUp;
                                       break;
               }
             //NumToHex (&sp, Msg.wParam, 8);

@@ -12,6 +12,11 @@
 
 #include "WidgetsDriver.hpp"
 
+extern void DebugAdd (const char *St);   // defined in application
+extern void DebugAddS (const char *s1, const char *s2);   // defined in Widgets.cpp
+extern void DebugAdd (const char *St, int n);
+extern void DebugAddR (const char *St, _Rect *r);
+
 typedef struct
   {
     SDL_Window *Window;
@@ -178,6 +183,14 @@ void MouseCursor (_Window *Window, bool Show)
     SDL_ShowCursor (Show ? SDL_ENABLE : SDL_DISABLE);
   }
 
+_Point MousePos (void)
+  {
+    _Point Mouse;
+    //
+    SDL_GetGlobalMouseState (&Mouse.x,&Mouse.y);
+    return Mouse;
+  }
+
 void WindowGetPosSize (_Window *Window, int *xPos, int *yPos, int *Width, int *Height)
   {
     int x, y, w, h;
@@ -295,6 +308,8 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX, int SizeY, byte Win
     if (WindowAttribute & waAlwaysOnTop)
       flags |= SDL_WINDOW_ALWAYS_ON_TOP;
     Res->Window = SDL_CreateWindow (Title, x, y, SizeX, SizeY, flags);   //Create window
+    //SDL_SetWindowPosition (Res->Window, x, y);
+    //SDL_GetWindowPosition (Res->Window, &x, &y);
     //Res->Window = SDL_CreateWindow (Title, x, y, 640, 480, flags);   //Create window
     if (!Res->Window)
       DebugAddSDLError ("SDL_CreateWindow");
@@ -468,11 +483,12 @@ bool WindowIDMatch (_WindowID WindowID, _Window *Window)
     return WindowID == SDL_GetWindowID (((__Window *) Window)->Window);
   }
 
+int MouseX = 0, MouseY = 0;   // Keep for Mouse Wheel events
+int ShiftState = 0;
+
 void EventPoll (_Event *Event)
   {
     SDL_Event SDLEvent;
-    static int MouseX = 0, MouseY = 0;   // Keep for Mouse Wheel events
-    static int ShiftState = 0;
     //
     Event->Type = etNone;
     if (SDL_PollEvent (&SDLEvent))
@@ -684,7 +700,7 @@ bool BitmapGetSize (_Bitmap *Bitmap, int *Width, int *Height)
     return false;
   }
 
-bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, bool Transparent)   // Allow resizing
+bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, int ColTransparent)   // Allow resizing
   {
     __Window *Window_;
     SDL_Surface *Surface;
@@ -695,10 +711,10 @@ bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecD
     Texture = NULL;
     Window_ = (__Window *) Window;
     Surface = (SDL_Surface *) Bitmap;
-    if (Transparent)
+    if (ColTransparent >= 0)
       {
-        Pixel = SurfaceGetPixel (Surface, 0, 0);
-        SDL_SetColorKey (Surface, SDL_TRUE, Pixel);
+        //Pixel = SurfaceGetPixel (Surface, 0, 0);
+        SDL_SetColorKey (Surface, SDL_TRUE, ColTransparent);
           //SDL_MapRGB (s->format, ColourR (Colour), ColourG (Colour), ColourB (Colour)));
       }
     Texture = SDL_CreateTextureFromSurface (Window_->Renderer, Surface);
@@ -739,4 +755,66 @@ char* ClipboardGet (void)
 bool ClipboardSet (char *Text)
   {
     return SDL_SetClipboardText (Text) == 0;
+  }
+
+
+////////////////////////////////////////////////////////////////////////////
+//
+// Start Thread
+
+//#include <pthread.h>
+
+/*int SDLThreadFunction (void *data)
+  {
+    int i, j;
+    //
+    j = 0;
+    for (i = 0; i < 1000; i++)
+      j += i;
+    return j;
+  }*/
+
+bool StartThread (_ThreadFunction ThreadFunction, void *Param)
+  {
+    SDL_Thread* threadID;
+    //
+    //threadID = SDL_CreateThread ((ThreadFunction) ThreadFunction, NULL, Param);
+    threadID = SDL_CreateThread (ThreadFunction, "Thread", Param);
+    if (threadID == 0)
+      DebugAdd ("** StartThread ERROR ");
+    else
+      DebugAdd ("New Thread ");//, (int) threadID);
+    return threadID != 0;
+    /*
+    pthread_t Thread;
+    //pthread_attr_t ThreadAttr;
+    int err;
+    char St [64], *s;
+    //
+    Thread = 0;
+    err = pthread_create (&Thread, NULL, ThreadFunction, Param);
+    s = St;
+    if (err)
+      {
+        StrCat (&s, "** StartThread ERROR ");
+        NumToStr (&s, err);
+      }
+    else
+      {
+        StrCat (&s, "New Thread 0x");
+        NumToHex (&s, Thread);
+      }
+    *s = 0;
+    DebugAdd (St);
+    return err == 0;
+    */
+  }
+
+////////////////////////////////////////////////////////////////////////////
+//
+// Main Programme
+
+int main (int argc, char* args [])
+  {
+    return main_ (argc, args);
   }

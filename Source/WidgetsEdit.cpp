@@ -378,10 +378,10 @@ void _EditCommon::DrawCustom (void)
     if (!Multiline)
       DrawBezel (2);
     RedrawFrom = RedrawTo = -1;
-    DebugAdd ("Edit Draw time (mS) ", ClockMS () - Tick); //####
-    DebugAdd ("EditDraw RenderBitmap time (uS) ", Time1); //####
-    DebugAdd ("EditDraw RenderBitmap make trans masks time (uS) ", Time2); //####
-    DebugAdd ("EditDraw RenderBitmap put up img time (uS) ", Time3); //####
+    DebugAddInt ("Edit Draw time (mS) ", ClockMS () - Tick); //####
+    DebugAddInt ("EditDraw RenderBitmap time (uS) ", Time1); //####
+    DebugAddInt ("EditDraw RenderBitmap make trans masks time (uS) ", Time2); //####
+    DebugAddInt ("EditDraw RenderBitmap put up img time (uS) ", Time3); //####
   }
 
 bool _EditCommon::ProcessKeyDown (_Event *Event, _Font *Font_)

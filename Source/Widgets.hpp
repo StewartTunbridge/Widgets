@@ -22,7 +22,8 @@ extern int Time1, Time2, Time3;   // Performance measurement
 extern void PointToStr (char **St, _Point Point);
 extern void DebugAdd (const char *St);   // defined in application
 extern void DebugAddS (const char *s1, const char *s2);   // defined in Widgets.cpp
-extern void DebugAdd (const char *St, int n);   // "
+extern void DebugAddInt (const char *St, int n);   // "
+extern void DebugAddHex (const char *St, int n);   // "
 extern void DebugAddP (const char *St, _Point p);   // "
 extern void DebugAddR (const char *St, _Rect *r);   // "
 
@@ -75,8 +76,6 @@ extern char *TextCallBackSelection [2];
 
 enum _Direction {dLeft, dUp, dRight, dDown};
 enum _Border {bNone, bRaised, bLowered, bMote};
-
-//void MouseCursor (bool Show);
 
 class _Container;
 class _Form;
@@ -311,6 +310,7 @@ class _Label: public _Container
       //
       _Label (_Container *Parent, _Rect Rect, char *Text_, _Align Align_ = aLeft, _Border Border_ = bNone);
       virtual void DrawCustom (void);
+      //virtual bool ProcessEventCustom (_Event *Event, _Point Offset);
   };
 
 class _LabelNumber: public _Container
@@ -400,6 +400,7 @@ class _Slider: public _Container
       bool MouseDown;
       virtual bool ProcessEventCustom (_Event *Event, _Point Offset);
     public:
+      int ColourKnob;
       _Slider (_Container *Parent, _Rect Rect, int Min, int Max, _Action Action = NULL);
       virtual void DrawCustom (void);
       int Value;

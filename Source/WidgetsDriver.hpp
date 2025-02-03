@@ -106,6 +106,9 @@ extern bool ForceSoftwareRendering;
 extern bool WidgetsInit (void);
 extern bool WidgetsUninit (void);
 
+// Mouse
+extern _Point MousePos (void);
+//void MouseCursor (bool Show);
 extern void MouseCursor (_Window *Window, bool Show);
 
 extern _Window *WindowCreate (char *Title, int x, int y, int SizeX, int SizeY, byte WindowAttributes = 0);  // Size*=0 => Full Screen
@@ -150,7 +153,7 @@ extern char* ClipboardGet (void);   // Read clipboard contents. User must free r
 extern bool ClipboardSet (char *Text);
 
 // Start Thread
-typedef void* (_ThreadFunction) (void *arg);
+typedef int (*_ThreadFunction) (void *arg);
 bool StartThread (_ThreadFunction ThreadFunction, void *Param);
 
 // Main

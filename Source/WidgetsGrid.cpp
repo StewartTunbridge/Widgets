@@ -328,7 +328,7 @@ void _GridView::DrawCustom (void)
     Font_->Style = Style;
     ScrollBarsDraw (ScrollBars, CellOffset, {Columns - Locked.x, Rows - Locked.y});
     DrawCellsClear ();
-    DebugAdd ("Grid Draw time (mS) ", ClockMS () - tick); //####
+    DebugAddInt ("Grid Draw time (mS) ", ClockMS () - tick); //####
   }
 
 bool _GridView::ProcessEventCustom (_Event *Event, _Point Offset)

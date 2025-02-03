@@ -54,10 +54,11 @@ const int cMaroon = 0x000080;
 #define ColourG(Colour) (byte)((Colour >> 8) & 0XFF)
 #define ColourB(Colour) (byte)((Colour >> 16) & 0xFF)
 
-int ColourAverage (int Colour1, int Colour2);
-int RGBToColour (byte r, byte g, byte b);
-int ColourAdjust (int Colour, int Pcnt);   // Adjust up/down: Pcnt 100=unchanged, 0=Black, 200=White
-int ColourGraded (int Colour1, int Colour2, int GradNum, int GradDen);
+extern int ColourAverage (int Colour1, int Colour2);
+extern int RGBToColour (byte r, byte g, byte b);
+extern void ColourToRGB (int Colour, byte *R, byte *G, byte *B);
+extern int ColourAdjust (int Colour, int Pcnt);   // Adjust up/down: Pcnt 100=unchanged, 0=Black, 200=White
+extern int ColourGraded (int Colour1, int Colour2, int GradNum, int GradDen);
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -77,6 +78,8 @@ int ColourGraded (int Colour1, int Colour2, int GradNum, int GradDen);
 
 extern bool IsDigit (char c);
 extern bool IsAlpha (char c);
+extern bool IsUpper (char c);
+extern bool IsLower (char c);
 extern char UpCase (char c);
 
 extern int UTF8Read (char ** Ch);
@@ -94,8 +97,9 @@ extern void StrAssignCopy (char **Dest, const char *Source);
 // Static Strings
 //extern void StrSwap (char *S1, char *S2);   // Swap contents
 
-extern char *StrPos (char *St, const char *Target);    // Search for string
-extern char *StrPos (char *St, const char Target);     // Search for char
+extern char *StrPos (char *St, const char *Target);     // Search for string
+extern char *StrPos (char *St, const char Target);      // Search for char
+extern char *StrPosLast (char *St, const char Target);  // Search for last occurence of Target
 
 extern int StrCmp (const char *s1, const char *s2);   // Compare: 0 => s1 = s2  -ve => s1 < s2  +ve => s1 > s2
 extern bool StrSame (const char *S1, const char *S2);
@@ -145,6 +149,7 @@ extern void StrCat (char **Dest, const char Ch);   // Append Char
 extern void StrCat (char **Dest, const char Ch, int n);   // Append Char repeated
 extern void StrCat (char **Dest, const char *St, int n);   // Append String length limited
 extern void StrInsert (char *Dest, char Ch);
+extern void StrDelete (char *Ch);
 extern void StrAppend (char *Dest, char Ch);
 extern void StrAppend (char *Dest, char *St);
 
@@ -488,7 +493,7 @@ extern bool GetCurrentPath (char **Path);   // Caller must free *Path
 extern void StrPathHome (char **St, char *Filename);
 
 extern bool CurrentDateTimeToStr (char **St, bool Date, bool Time);
-extern void Log (char *Filename, char *Line);
+extern bool Log (char *Filename, char *Line);
 
 /*
 // C LIST

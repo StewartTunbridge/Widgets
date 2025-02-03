@@ -22,7 +22,7 @@
 
 extern void DebugAdd (const char *St);
 extern void DebugAddS (const char *s1, const char *s2);
-extern void DebugAdd (const char *St, int n);
+extern void DebugAddInt (const char *St, int n);
 extern void DebugAddP (const char *St, _Point p);
 extern void DebugAddR (const char *St, _Rect *r);
 
@@ -71,10 +71,10 @@ _Bitmap *LoadBMP (_Window *Window, char *Filename)
                     bytepad = bytepl - ((bpp * sizeX + 7) >> 3);
                     //####
                     DebugAddS ("LoadBMP", Filename);
-                    DebugAdd ("sizeX", sizeX);
-                    DebugAdd ("SizeY", sizeY);
-                    DebugAdd ("bits/pixel", bpp);
-                    DebugAdd ("bytes/pixel", bytepp);
+                    DebugAddInt ("sizeX", sizeX);
+                    DebugAddInt ("SizeY", sizeY);
+                    DebugAddInt ("bits/pixel", bpp);
+                    DebugAddInt ("bytes/pixel", bytepp);
                     if (sizeX && sizeY && bpp && pixels < size && comp == 0 && bpp >= 4)
                       {
                         Img = BitmapCreate (Window, sizeX, sizeY);

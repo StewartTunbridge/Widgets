@@ -9,27 +9,31 @@
 #include <unistd.h>
 #include <string.h>
 
-#include "../Widgets/Widgets.hpp"
-#include "../Widgets/WidgetsGrid.hpp"
+#include "Widgets.hpp"
+#include "WidgetsGrid.hpp"
+#include "FileSelect.hpp"
 
+
+bool FileSelectActive = false;
 
 class _FormFileSelect: public _Form
   {
     public:
-      _FormFileSelect (char *Title, _Rect Position, char *Filter, bool SaveFile);
+      _FormFileSelect (char *Title, _Rect Position, bool SaveFile, _ActionResultChars ActionFileSelected_);
       ~_FormFileSelect (void);
       _Label *lPath;
       _Container *cToolbar;
       _Edit *eNewFilename;
       _Button *bSave;
       _GridView *Grid;
+      _ActionResultChars ActionFileSelected;
       void DirFill (void);
+      void ActionSelection (void);
       //
-      bool SaveFile_;
+      bool SaveFile;
       _DirItem *Dir;
-      int Index = -1;
-      _DirItem *di;
-      char *Result;
+      int CurrentIndex = -1;
+      _DirItem *CurrentItem;
   };
 
 _FormFileSelect *fFileSelect = NULL;
@@ -38,14 +42,38 @@ char *FileSelectFilter;
 char* ColumnTitle [] = {"Size", "Filename"};
 _Align ColumnAlign [] = {aRight, aLeft};
 
+void _FormFileSelect::ActionSelection (void)
+  {
+    char *Res, *r;
+    //
+    Res = (char *) malloc (MaxPath); //(StrLen (fFileSelect->lPath->TextGet ()) + StrLen (fFileSelect->DirResult->Name) + 2);
+    r = Res;
+    StrCat (&r, lPath->TextGet ());
+    StrCat (&r, PathDelimiter);
+    if (SaveFile)
+      StrCat (&r, eNewFilename->TextGet ());
+    else
+      StrCat (&r, CurrentItem->Name);
+    *r = 0;
+    if (FileSelectFilter)
+      if (FileSelectFilter [0] == '.')
+        StrAddExtension (Res, FileSelectFilter);
+    if (ActionFileSelected)
+      ActionFileSelected (Res);
+    free (Res);
+    Die ();
+  }
+
 void FilesCellDraw (_GridView *Grid, int x, int y, _Rect Rect)
   {
+    _FormFileSelect *Form;
     char St [32], *s;
     _Font *f;
     //
+    Form = (_FormFileSelect *) Grid->Form;
     Rect.x += 4;
     Rect.Width -= 8;
-    fFileSelect->Grid->ColourText = -1;
+    Form->Grid->ColourText = -1;
     f = Grid->FontFind ();
     if (!f)
       return;
@@ -57,76 +85,64 @@ void FilesCellDraw (_GridView *Grid, int x, int y, _Rect Rect)
     else
       {
         f->Style = 0;
-        if (ListGoto (fFileSelect->Dir, y - 1, &fFileSelect->Index, &fFileSelect->di))
+        if (ListGoto (Form->Dir, y - 1, &Form->CurrentIndex, &Form->CurrentItem))
           {
-            if (fFileSelect->di->Directory)
-              fFileSelect->Grid->ColourText = ColourAdjust (cBlue, 120);
+            if (Form->CurrentItem->Directory)
+              Form->Grid->ColourText = ColourAdjust (cBlue, 120);
             if (x == 0)
               {
                 s = St;
-                NumToStr (&s, fFileSelect->di->Size);
+                NumToStr (&s, Form->CurrentItem->Size);
                 *s = 0;
                 Grid->TextOutWrap (Rect, St, aRight, aCenter);
               }
             else
-              Grid->TextOutWrap (Rect, fFileSelect->di->Name, aLeft, aCenter);
+              Grid->TextOutWrap (Rect, Form->CurrentItem->Name, aLeft, aCenter);
           }
       }
   }
 
-char* FilesRead (_GridView *Grid, int x, int y)
+char* CellRead (_GridView *Grid, int x, int y)
   {
-    char *p;
+    _FormFileSelect *Form;
     //
-    if (ListGoto (fFileSelect->Dir, y - 1, &fFileSelect->Index, &fFileSelect->di))
-      if (fFileSelect->di->Directory)
+    Form = (_FormFileSelect *) Grid->Form;
+    if (ListGoto (Form->Dir, y - 1, &Form->CurrentIndex, &Form->CurrentItem))
+      if (Form->CurrentItem->Directory)
         {
-          chdir (fFileSelect->di->Name);
-          fFileSelect->DirFill ();
+          chdir (Form->CurrentItem->Name);
+          Form->DirFill ();
         }
       else
-        if (fFileSelect->SaveFile_)
-          fFileSelect->eNewFilename->TextSet (fFileSelect->di->Name);
+        if (Form->SaveFile)
+          Form->eNewFilename->TextSet (Form->CurrentItem->Name);
         else
-          {
-            fFileSelect->Result = (char *) malloc (MaxPath); //(StrLen (fFileSelect->lPath->TextGet ()) + StrLen (fFileSelect->DirResult->Name) + 2);
-            p = fFileSelect->Result;
-            StrCat (&p, fFileSelect->lPath->TextGet ());
-            StrCat (&p, PathDelimiter);
-            StrCat (&p, fFileSelect->di->Name);
-            *p = 0;
-          }
+          Form->ActionSelection ();
     return NULL;
   }
 
 void ActionFileSelectSave (_Container *Container)
   {
+    _FormFileSelect *Form;
     _Button *b;
-    char *p;
     //
+    Form = (_FormFileSelect *) Container->Form;
     b = (_Button *) Container;
     if (!b->Down)
-      if (StrLen (fFileSelect->eNewFilename->TextGet ()) > 0)
-        {
-          fFileSelect->Result = (char *) malloc (MaxPath);
-          p = fFileSelect->Result;
-          StrCat (&p, fFileSelect->lPath->TextGet ());
-          StrCat (&p, PathDelimiter);
-          StrCat (&p, fFileSelect->eNewFilename->TextGet ());
-          *p = 0;
-        }
+      if (StrLen (Form->eNewFilename->TextGet ()) > 0)
+        Form->ActionSelection ();
   }
 
-_FormFileSelect::_FormFileSelect (char *Title, _Rect Position, char *Filter, bool SaveFile)
+_FormFileSelect::_FormFileSelect (char *Title, _Rect Position, bool SaveFile_, _ActionResultChars ActionFileSelected_)
                : _Form (Title, Position, waAlwaysOnTop | waResizable)
   {
     int y;
     //
-    Result = NULL;
+    ActionFileSelected = ActionFileSelected_;
+    Container->FontSet (NULL, 16);
     Dir = NULL;
-    FileSelectFilter = Filter;
-    SaveFile_ = SaveFile;
-    Container->FontSet ("ARI.ttf", 14);
+    SaveFile = SaveFile_;
+    Container->FontSet (NULL, 14);
     y = 0;
     lPath = new _Label (Container, {4, y, 0, 24}, NULL); y += lPath->Rect.Height;
     if (SaveFile)
@@ -140,8 +156,9 @@ _FormFileSelect::_FormFileSelect (char *Title, _Rect Position, char *Filter, boo
     Grid->Locked = {0, 1};
     Grid->Title = {0, 1};
     Grid->Options = (Grid->Options | goSelectLine | goAdjustColumn) & ~goSelectMulti;
-    Grid->ActionCellRead = FilesRead;
+    Grid->ActionCellRead = CellRead;
     DirFill ();
+    FileSelectActive = true;
   }
 
 int DirItemsCompare (_DirItem *Data1, _DirItem *Data2)
@@ -178,7 +195,7 @@ void _FormFileSelect::DirFill (void)
         lPath->TextSet (Path);
         free (Path);
         DirFree (Dir);
-        Index = -1;
+        CurrentIndex = -1;
         Dir = NULL;
         DirRead (&Dir, ReadDirCallBack);
         Dir = ListSort (Dir, DirItemsCompare);
@@ -192,37 +209,18 @@ void _FormFileSelect::DirFill (void)
 _FormFileSelect::~_FormFileSelect (void)
   {
     DirFree (Dir);
-    free (Result);
     fFileSelect = NULL;
+    FileSelectActive = false;
   }
 
-bool FileSelect (char **Name, char *Filter, bool SaveFile)   // caller must free Name
+void FileSelect (char *Title, char *Filter, bool SaveFile, _ActionResultChars ActionFileSelected)   // caller must free Name
   {
-    bool Res;
+    _Point p;
     //
-    Res = false;
-    *Name = NULL;
     if (!fFileSelect)
       {
-        fFileSelect = new _FormFileSelect ("Select File", {50, 50, 600, 400}, Filter, SaveFile);
-        while (true)
-          {
-            if (FormsUpdate ())
-              break;
-            if (fFileSelect == NULL)
-              break;
-            if (fFileSelect->Result)
-              {
-                if (Filter)
-                  StrForceExtension (fFileSelect->Result, Filter);
-                StrAssignCopy (Name, fFileSelect->Result);
-                Res = true;
-                break;
-              }
-            usleep (1000);
-          }
-        if (fFileSelect)
-          delete fFileSelect;
+        FileSelectFilter = Filter;
+        p = MousePos ();
+        fFileSelect = new _FormFileSelect (Title, {p.x, p.y, 300, 400}, SaveFile, ActionFileSelected);
       }
-    return Res;
   }

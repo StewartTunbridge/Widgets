@@ -24,6 +24,7 @@ extern void DebugAdd (const char *St);   // defined in application
 extern void DebugAddS (const char *s1, const char *s2);   // defined in Widgets.cpp
 extern void DebugAdd (const char *St, int n);
 extern void DebugAddR (const char *St, _Rect *r);
+extern void DebugAddP (const char *St, _Point p);
 
 extern bool RenderBitmapTransparentTL (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest);
 
@@ -67,6 +68,7 @@ typedef struct
 bool ForceSoftwareRendering = false;
 
 Display *XDisplay = NULL;
+Window XWindow = 0;
 
 
 /////////////////////////////////////////////////////////////////////////
@@ -240,6 +242,17 @@ Pixmap MouseCursorPixmap = 0;
 byte MouseCursorData [] = {0};
 XColor MouseCursorCol = {0, 0, 0, 0, 0, 0};
 
+_Point MousePos (void)
+  {
+    //return {50, 50}; //####
+    Window root, child;
+    int rootX, rootY, winX, winY;
+    unsigned int mask;
+    //XQueryPointer (XDisplay, DefaultRootWindow (XDisplay), &root, &child, &rootX, &rootY, &winX, &winY, &mask);
+    XQueryPointer (XDisplay, XWindow, &root, &child, &rootX, &rootY, &winX, &winY, &mask);
+    return {rootX, rootY};
+  }
+
 void MouseCursor (_Window *Window, bool Show)
   {
     __Window *Window_;
@@ -270,7 +283,8 @@ bool WidgetsInit (void)
   {
     XSetErrorHandler (ErrorHandler);
     XDisplay = XOpenDisplay (NULL);
-    return true;
+	  // slows things if true XSynchronize (XDisplay, false);   // make operations asynchronous
+	  return true;
   }
 
 bool WidgetsUninit (void)
@@ -379,8 +393,6 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
     //
     OK = false;
     Res = (__Window *) malloc (sizeof (__Window));
-    //Res->XDisplay = XDisplay;
-    //Res->XDisplay = XOpenDisplay (NULL);
     if (XDisplay)
       {
         Res->WindowAttributes = WindowAttributes;
@@ -407,12 +419,12 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
             SizeY_ = Height;
           }
         Res->XWindow = XCreateSimpleWindow (XDisplay, RootWindow (XDisplay, Res->XScreen), x, y, SizeX_, SizeY_, 0, BlackPixel (XDisplay, Res->XScreen), WhitePixel (XDisplay, Res->XScreen));
-        /*Res->XWindow = XCreateWindow (XDisplay, RootWindow (XDisplay, Res->XScreen),
-                                      Max (x, 0), Max (y, 0), SizeX_, SizeY_,
-                                      0, Res->XDepth, InputOutput, Res->XVisual, None, NULL);*/
-                                      //CWColormap | CWBorderPixel | CWBackPixel, &attr);//None, None);
         if (Res->XWindow)
           {
+            if (XWindow == 0)
+              XWindow = Res->XWindow;   // keep for MousePos ()
+            XMapWindow (XDisplay, Res->XWindow);   // needed for XMoveWindow ()
+            XMoveWindow (XDisplay, Res->XWindow, x, y);
             Res->SizeX = SizeX_;
             Res->SizeY = SizeY_;
             Res->WinGCCopy = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
@@ -430,7 +442,6 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
             Atom wm_delete_window = XInternAtom (XDisplay, "WM_DELETE_WINDOW", False);
             XSetWMProtocols (XDisplay, Res->XWindow, &wm_delete_window, 1);
             //
-            // something for resizable?
             if (~WindowAttributes & waResizable)
               {
                 XSizeHints *size_hints = XAllocSizeHints ();
@@ -441,6 +452,9 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
                 XFree (size_hints);
                 //attr.override_redirect = 1; BLOCKS EVERY WINDOW MANAGER TASK
                 //XChangeWindowAttributes (Res->XDisplay, Res->XWindow, CWOverrideRedirect, &attr);
+                window_type = XInternAtom (XDisplay, "_NET_WM_WINDOW_TYPE", false);
+                value = XInternAtom (XDisplay, "_NET_WM_WINDOW_TYPE_MENU", false);
+                XChangeProperty (XDisplay, Res->XWindow, window_type, XA_ATOM, 32, PropModeReplace, (unsigned char *) &value, 1);
               }
             //
             if (WindowAttributes & waBorderless)
@@ -479,27 +493,13 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
                 XChangeProperty (XDisplay, Res->XWindow, window_type, XA_ATOM, 32, PropModeReplace, (unsigned char *) &value, 1);
               }
             //
-            /*if (~WindowAttributes & waResizable)   // doesn't work
-              {
-                sh = XAllocSizeHints ();
-                sh->min_width = SizeX_;
-                sh->min_height = SizeY_;
-                sh->width = SizeX_;
-                sh->height = SizeY_;
-                sh->max_width = SizeX_;
-                sh->max_height = SizeY_;
-                //XSetWMSizeHints (Res->XDisplay, Res->XWindow, sh, 0);
-                XSetWMNormalHints (XDisplay, Res->XWindow, sh);
-                XFree (sh);
-              }*/
-            //
             XSelectInput (XDisplay, Res->XWindow,
               ExposureMask |
               KeyPressMask | KeyReleaseMask |
               ButtonPressMask | ButtonReleaseMask |
               PointerMotionMask | //SubstructureNotifyMask | //####
               StructureNotifyMask);   // Specify what Events we get
-            XMapWindow (XDisplay, Res->XWindow);   // Display Window
+            //XMapWindow (XDisplay, Res->XWindow);   // Display Window
             if (Title)
               XStoreName (XDisplay, Res->XWindow, Title);   // Set Title Name
             //XSetInputFocus (Res->XDisplay, Res->XWindow, RevertToNone, CurrentTime);
@@ -844,6 +844,7 @@ void EventPoll (_Event *Event)
             Event->Type = etMouseMove;
             Event->X = e.xmotion.x;
             Event->Y = e.xmotion.y;
+            //DebugAddP ("Mouse: ", {Event->X, Event->Y}); // only gives points in a window
           }
       }
     Event->ShiftState = ShiftState;
@@ -971,8 +972,6 @@ bool RenderBitmap (__Window *Window, XImage *Img, _Rect RecSource, int x, int y,
           // If Transparent, create a transparency Mask
           if (ColTransparent >= 0)
             {
-              //Img_ = XGetImage (XDisplay, RenderTargetTexture->Image, x, y, RecSource.Width, RecSource.Height, 7, ZPixmap);//####
-              //XDestroyImage (Img_);
               ColTransparent = ColourToXColour (ColTransparent);
               Img_ = (XImage *) BitmapCreate (Window, RecSource.Width, RecSource.Height);
               int Tick2 = ClockuS ();//####
@@ -992,36 +991,24 @@ bool RenderBitmap (__Window *Window, XImage *Img, _Rect RecSource, int x, int y,
                         XPutPixel (ImgMask, x1, y1, 0xFFFFFF);
                       }
                   }
-              Time2 += ClockuS () - Tick2;//####
+              int Tick3 = ClockuS (); //####
+              Time2 += Tick3 -Tick2;//####
               // Now put on "screen"
               // Draw the unmasked bits in Target
               // Clear effected pixels in Dest (using AND NOT)
-              int Tick3 = ClockuS (); //####
-              //@@@@SetGCFunction (Window, RenderTargetTexture->gc, GXandInverted);//GXandInverted);            NOTE REMOVING SetGCFunction make it very fast
-              //@@@@SetGCFunction (Window, Window_->WinGC, GXandInverted);//GXandInverted);            NOTE REMOVING SetGCFunction make it very fast
-              //@@@@XPutImage (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, ImgMask,
               XPutImage (XDisplay, RenderTargetTexture->Image, Window_->WinGCAndInvert, ImgMask,//
                          0, 0, x, y, RecSource.Width, RecSource.Height);
               // Copy new coloured Mask into Dest (using OR)
-              //@@@@SetGCFunction (Window, RenderTargetTexture->gc, GXor);
-              //@@@@SetGCFunction (Window, Window_->WinGC, GXor);
-              //@@@@XPutImage (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, Img_,
               XPutImage (XDisplay, RenderTargetTexture->Image, Window_->WinGCOr, Img_,//
                          0, 0, x, y, RecSource.Width, RecSource.Height);
               // Modify DestMask (using OR)
-              //@@@@SetGCFunction (Window, RenderTargetTexture->gc, GXor);
-              //@@@@SetGCFunction (Window, Window_->WinGC, GXor);
               if (RenderTargetTexture->Mask && ImgMask)
-                //@@@@XPutImage (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gc, ImgMask,
                 XPutImage (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr, ImgMask,//
                            0, 0, x, y, RecSource.Width, RecSource.Height);
               Time3 += ClockuS () - Tick3; //####
               // free stuff
               BitmapDestroy (Img_);
               BitmapDestroy (ImgMask);
-              // Restore gc
-              //@@@@SetGCFunction (Window, RenderTargetTexture->gc, GXcopy);
-              //@@@@SetGCFunction (Window, Window_->WinGC, GXcopy);
             }
           else
             {
@@ -1190,7 +1177,15 @@ bool ClipboardSet (char *Text)
 
 #include <pthread.h>
 
-bool StartThread (_ThreadFunction ThreadFunction, void *Param)
+_ThreadFunction ThreadFunction_;
+
+void* ThreadWrapper (void *Params)
+  {
+    ThreadFunction_ (Params);
+    return NULL;
+  }
+
+bool StartThread (_ThreadFunction ThreadFunction, void *Params)
   {
     pthread_t Thread;
     //pthread_attr_t ThreadAttr;
@@ -1198,7 +1193,8 @@ bool StartThread (_ThreadFunction ThreadFunction, void *Param)
     char St [64], *s;
     //
     Thread = 0;
-    err = pthread_create (&Thread, NULL, ThreadFunction, Param);
+    ThreadFunction_ = ThreadFunction;
+    err = pthread_create (&Thread, NULL, ThreadWrapper, Params);//ThreadFunction Param
     s = St;
     if (err)
       {

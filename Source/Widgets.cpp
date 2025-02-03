@@ -45,25 +45,25 @@ int WindowCount = 0;
 int CreateCount = 0;
 int DelCount = 0;
 
-char *CurrentPath = NULL;
-char *Filename_ = NULL;
+char *HomePath = NULL;
 
-void HomeFilePath (char *Filename)
+char *AddHomePath (char *Filename)
   {
-    char *p;
+    char *Res, *r;
     //
+    Res = NULL;
     if (Filename [0] == PathDelimiter)
-      StrAssignCopy (&Filename_, Filename);
+      StrAssignCopy (&Res, Filename);
     else
       {
-        free (Filename_);
-        Filename_ = (char *) malloc (StrLen (CurrentPath) + StrLen (Filename) + 8);
-        p = Filename_;
-        StrCat (&p, CurrentPath);
-        StrCat (&p, PathDelimiter);
-        StrCat (&p, Filename);
-        *p = 0;
+        Res = (char *) malloc (StrLen (HomePath) + StrLen (Filename) + 8);
+        r = Res;
+        StrCat (&r, HomePath);
+        StrCat (&r, PathDelimiter);
+        StrCat (&r, Filename);
+        *r = 0;
       }
+    return Res;
   }
 
 
@@ -132,17 +132,30 @@ void DebugAddS (const char *s1, const char *s2)
     free (s);
   }
 
-void DebugAdd (const char *St, int n)
+void DebugAddIntDecHex (const char *St, int n, bool Hex)
   {
     char *s = (char *) malloc (StrLen (St) + 16);
     char *p = s;
     if (St)
       StrCat (&p, St);
     StrCat (&p, ' ');
-    NumToStr (&p, n);
+    if (Hex)
+      NumToStrBase (&p, n, 0, 16);
+    else
+      IntToStr (&p, n);
     *p = 0;
     DebugAdd (s);
     free (s);
+  }
+
+void DebugAddInt (const char *St, int n)
+  {
+    DebugAddIntDecHex (St, n, false);
+  }
+
+void DebugAddHex (const char *St, int n)
+  {
+    DebugAddIntDecHex (St, n, true);
   }
 
 void DebugAddP (const char *St, _Point pnt)
@@ -224,22 +237,13 @@ _Point CursorLocation;
 char *TextCallBackSelection [2];
 _Bitmap *TextCallBackBitmap;
 
-int GetBitmapIndex (char **St)
+int GetBitmapIndex (char Ch)
   {
-    int Res;
-    char c;
-    //
-    if (*St [0] != '\e')
-      return -1;
-    c = UpCase ((*St) [1]);
-    if (c >= '0' && c <= '9')
-      Res = c - '0';
-    else if (c >= 'A' && c <= 'Z')
-      Res = c - 'A' + 10;
-    else
-      return -1;
-    (*St) += 2;
-    return Res;
+    if (IsDigit (Ch))
+      return Ch - '0';
+    if (IsUpper (Ch))
+      return Ch - 'A' + 10;
+    return -1;
   }
 
 bool RenderBitmapTransparentTL (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest)
@@ -281,6 +285,7 @@ bool EditLinesTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *P
     static int ColBG;
     static byte Style;
     bool Selected_;
+    char c;
     //
     // Cursor?
     if (Posn)
@@ -290,20 +295,32 @@ bool EditLinesTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *P
           RenderFillRect (Window, {Posn->x - w / 2, Posn->y, w, Font->YAdvance}, Font->Colour);
           CursorLocation = *Posn;
         }
-    // Bitmap?
+    // Bitmap / Bold / Italic / Underline
     while (true)
       {
-        bi = GetBitmapIndex (Text);
-        if (bi < 0)
+        if (**Text != '\e')   // escape
           break;
-        if (Window && Posn)
-          Posn->x += DrawTextBitmap (Window, bi, Posn->x, Posn->y, Font->YAdvance);
-        else if (Size)
+        (*Text)++;
+        c = **Text;
+        (*Text)++;
+        bi = GetBitmapIndex (c);
+        if (bi >= 0)
           {
-            bsz = DrawTextBitmap (0, bi, 0, 0, 0);
-            Size->x += bsz;
-            Size->y = Max (Size->y, bsz);
+            if (Window && Posn)
+              Posn->x += DrawTextBitmap (Window, bi, Posn->x, Posn->y, Font->YAdvance);
+            else if (Size)
+              {
+                bsz = DrawTextBitmap (0, bi, 0, 0, 0);
+                Size->x += bsz;
+                Size->y = Max (Size->y, bsz);
+              }
           }
+        else if (c == 'b')
+          Font->Style ^= fsBold;
+        else if (c == 'i')
+          Font->Style ^= fsItalic;
+        else if (c == 'u')
+          Font->Style ^= fsUnderline;
       }
     // Selection?
     if (Window && Posn)
@@ -380,7 +397,7 @@ _Form::_Form (char *Title, _Rect Pos, byte WindowAttributes_)  // : _List (&Form
       {
         WidgetsInit ();
         TextCallBack = &EditLinesTextCallBack;
-        GetCurrentPath (&CurrentPath);
+        GetCurrentPath (&HomePath);
       }
     Container = NULL;
     KeyFocus = NULL;
@@ -416,8 +433,7 @@ _Form::~_Form (void)
         StrCat (&sp, " Deleted");
         *sp = 0;
         DebugAdd (s);
-        free (CurrentPath);
-        free (Filename_);
+        free (HomePath);
       }
   }
 
@@ -425,6 +441,8 @@ void _Form::Die (void)
   {
     DieFlag = true;
   }
+
+//_Point Mouse;
 
 bool ProcessEvent (void)   // Looks for and processes events for all Forms. Return TRUE if anything happened
   {
@@ -994,19 +1012,22 @@ void _Container::DrawCustom (void)
 bool _Container::FontSet (char *FontFile, int Size, byte Style)
   {
     _Font *Font_;
+    char *s;
     //
+    s = NULL;
     Font_ = NULL;
     if (FontFile && *FontFile)   // Open New Font
       {
-        HomeFilePath (FontFile);
-        Font_ = FontCreate (Filename_, Size, Style, -1);
+        s = AddHomePath (FontFile);
+        Font_ = FontCreate (s, Size, Style, -1);
         if (Font_)
-          StrAssignCopy (&FontFileDefault, FontFile);   // Set Default Font
+          if (FontFileDefault == NULL)
+            StrAssignCopy (&FontFileDefault, FontFile);   // Set Default Font
       }
     else if (FontFileDefault && *FontFileDefault)
       {
-        HomeFilePath (FontFileDefault);
-        Font_ = FontCreate (Filename_, Size, Style, -1);
+        s = AddHomePath (FontFileDefault);
+        Font_ = FontCreate (s, Size, Style, -1);
       }
     if (Font_)   // it worked
       {
@@ -1017,6 +1038,8 @@ bool _Container::FontSet (char *FontFile, int Size, byte Style)
     //Invalidate (true);
     if (!Font)
       DebugAddS ("FontSet FAIL: ", FontFile);
+    if (s)
+      free (s);
     return Font != NULL;
   }
 
@@ -1374,12 +1397,21 @@ _Rect AddMargin (_Rect Rect, _Point Margin)
 
 _Point _Container::TextMeasure (_Font *Font_, char *Text)
   {
+    _Point Size;
+    byte Style_;
+    //
     if (Font_ == NULL)
       Font_ = FontFind ();
     if (Font_ == NULL)
-      return {0, 0};
-    TextCallBackBitmap = BitmapFind ();
-    return TextSize (Font_, Text);
+      Size = {0, 0};
+    else
+      {
+        TextCallBackBitmap = BitmapFind ();
+        Style_ = Font_->Style;
+        Size = TextSize (Font_, Text);
+        Font_->Style = Style_;
+      }
+    return Size;
   }
 
 //const int OutlineX [] = {-1,  1, -1, 1,  -1, 1,  0, 0}; //{0, 2, 0, 2};
@@ -1390,7 +1422,7 @@ void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Al
     _Point Size;
     int dX, dY;
     int cFG, cBG;
-    byte stl;
+    //byte stl;
     //
     if (Text == NULL)
       return;
@@ -1401,7 +1433,7 @@ void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Al
     TextCallBackBitmap = BitmapFind ();
     cFG = Font_->Colour;
     cBG = Font_->ColourBG;
-    stl = Font_->Style;
+    //stl = Font_->Style;
     if (Font_->Colour < 0)
       Font_->Colour = ColourTextFind ();
     if (!IsEnabled ())
@@ -1431,7 +1463,7 @@ void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Al
       TextRender (Form->Window, Font_, Text, {Rect.x + RenderTargetOffset.x, Rect.y + RenderTargetOffset.y});
     Font_->Colour = cFG;
     Font_->ColourBG = cBG;
-    Font_->Style = stl; //|= stl & (fsShadow | fsOutline);
+    //Font_->Style = ???(Font_->Style ^ stl) & (fsBold | fsItalic | fsUnderline); //|= stl & (fsShadow | fsOutline);
   }
 
 // Word wrap text out.  !Write => measure only
@@ -1566,13 +1598,16 @@ void _Container::TextOutWrapInverse (_Rect Rect, char *St, _Align Align, _Point 
     cText = ColourTextFind ();
     DrawRectangle ({0, Rect.y, Rect.Width, Rect.Height}, -1, -1, cText);//ColFont cSelected
     Font_ = FontFind ();
-    cFG = Font_->Colour;
-    cBG = Font_->ColourBG;
-    Font_->Colour = cText ^ cWhite;//cTextBgnd cTextHighlight
-    Font_->ColourBG = cText;//ColFont cSelected
-    TextOutWrap (AddMargin (Rect, Margin), St, Align, aCenter);
-    Font_->Colour = cFG;
-    Font_->ColourBG = cBG;
+    if (Font_)
+      {
+        cFG = Font_->Colour;
+        cBG = Font_->ColourBG;
+        Font_->Colour = cText ^ cWhite;//cTextBgnd cTextHighlight
+        Font_->ColourBG = cText;//ColFont cSelected
+        TextOutWrap (AddMargin (Rect, Margin), St, Align, aCenter);
+        Font_->Colour = cFG;
+        Font_->ColourBG = cBG;
+      }
   }
 
 void _Container::DrawLine (int x1, int y1, int x2, int y2, int Colour, int Width)
@@ -2599,6 +2634,11 @@ void _Label::DrawCustom (void)
     DrawBorder (Border, 0);
   }
 
+/*bool _Label::ProcessEventCustom (_Event *Event, _Point Offset)
+  {
+    return IsEventMine (Event, Offset);
+  }*/
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -2924,6 +2964,7 @@ void _EditNumber::ValueSet (int Val)
 
 _Slider::_Slider (_Container *Parent, _Rect Rect_, int Min, int Max, _Action Action_) : _Container (Parent, Rect_)
   {
+    ColourKnob = Colour;
     ValueMin = Min;
     ValueMax = Max;
     Value = ValueMin;
@@ -2991,27 +3032,30 @@ void _Slider::DrawCustom (void)
   {
     int hx, hy;
     int Pos;
-    _Rect Button;
-    int Col;
+    _Rect Knob;
+    int ColSlot, ColKnob;
     //
     hx = Rect.Width / 2;
     hy = Rect.Height / 2;
-    Col = ColourFind ();
+    ColSlot = ColourFind ();
+    ColKnob = ColourKnob;
+    if (ColKnob < 0)
+      ColKnob = ColSlot;
     if (Vertical)
       {
-        DrawBorder ({hx, SliderMargin, 0, Rect.Height - 2 * SliderMargin}, bMote, Col, 0);
+        DrawBorder ({hx, SliderMargin, 0, Rect.Height - 2 * SliderMargin}, bMote, ColSlot, 0);
         Pos = (Rect.Height - 2 * SliderMargin) * (ValueMax - Value) / (ValueMax - ValueMin);
-        Button = {hx - 2 * SliderMargin, Pos, 4 * SliderMargin, 2 * SliderMargin};
+        Knob = {hx - 2 * SliderMargin, Pos, 4 * SliderMargin, 2 * SliderMargin};
       }
     else
       {
-        DrawBorder ({SliderMargin, hy, Rect.Width - 2 * SliderMargin, 0}, bMote, Col, 0);
+        DrawBorder ({SliderMargin, hy, Rect.Width - 2 * SliderMargin, 0}, bMote, ColSlot, 0);
         Pos = (Rect.Width - 2 * SliderMargin) * (Value - ValueMin) / (ValueMax - ValueMin);
-        Button = {Pos, hy - 2 * SliderMargin, 2 * SliderMargin, 4 * SliderMargin};
+        Knob = {Pos, hy - 2 * SliderMargin, 2 * SliderMargin, 4 * SliderMargin};
       }
-    DrawRectangle (Button, -1, -1, Col);
-    DrawBorder (Button, bRaised, Col, 0);
-    DrawBorder (Button, bRaised, Col, 1);
+    DrawRectangle (Knob, -1, -1, ColKnob);
+    DrawBorder (Knob, bRaised, ColKnob, 0);
+    DrawBorder (Knob, bRaised, ColKnob, 1);
   }
 
 
@@ -3175,13 +3219,15 @@ void _Image::DrawCustom (void)
   {
     _Rect rSrc, rDest;
     _Point Size, Size_;
+    char *s;
     //
     if (Bitmap == NULL && Text)
       {
-        HomeFilePath (Text);
-        Bitmap = BitmapLoad (Form->Window, Filename_);
+        s = AddHomePath (Text);
+        Bitmap = BitmapLoad (Form->Window, s);
         if (Bitmap == NULL)
-          DebugAddS ("Image: File not loaded: ", Filename_);
+          DebugAddS ("Image: File not loaded: ", s);
+        free (s);
       }
     if (Bitmap)
       {

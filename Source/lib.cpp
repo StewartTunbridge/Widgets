@@ -75,6 +75,13 @@ int RGBToColour (byte r, byte g, byte b)
     return ((int) b << 16) | ((int) g << 8) | ((int) r);
   }
 
+void ColourToRGB (int Colour, byte *R, byte *G, byte *B)
+  {
+    *R = Colour;
+    *G = Colour >> 8;
+    *B = Colour >> 16;
+  }
+
 // Adjust Colour up/down: Pcnt 100=unchanged, 0=Black, 200=White
 int ColourAdjust (int Colour, int Pcnt)
   {
@@ -324,13 +331,19 @@ bool IsDigit (char c)
     return (c >= '0') && (c <= '9');
   }
 
+bool IsUpper (char c)
+  {
+    return c >= 'A' && c <= 'Z';
+  }
+
+bool IsLower (char c)
+  {
+    return c >= 'a' && c <= 'z';
+  }
+
 bool IsAlpha (char c)
   {
-    if ((c >= 'A') && (c <= 'Z'))
-      return true;
-    if ((c >= 'a') && (c <= 'z'))
-      return true;
-    return false;
+    return IsLower (c) || IsUpper (c);
   }
 
 char UpCase (char c)
@@ -488,6 +501,21 @@ char *StrPos (char *St, const char Target)
           return NULL;
         St++;
       }
+  }
+
+char *StrPosLast (char *St, const char Target)
+  {
+    char *Res;
+    //
+    Res = NULL;
+    if (St)
+      while (*St)
+        {
+          if (*St == Target)
+            Res = St;
+          St++;
+        }
+    return Res;
   }
 
 int StrCmp (const char *s1, const char *s2)
@@ -1032,6 +1060,16 @@ void StrInsert (char *Dest, char Ch)
         }
   }
 
+void StrDelete (char *Ch)
+  {
+    if (Ch)
+      while (*Ch)
+        {
+          Ch [0] = Ch [1];
+          +Ch++;
+        }
+  }
+
 void StrAppend (char *Dest, char Ch)
   {
     Dest = StrPos (Dest, (char) 0);
@@ -1050,7 +1088,8 @@ void StrAppend (char *Dest, char *St)
 
 char *StrFindFileExtension (char *FileName)
   {
-    char *Res;
+    return StrPosLast (FileName, '.');
+    /*char *Res;
     //
     Res = NULL;
     if (FileName)
@@ -1062,7 +1101,7 @@ char *StrFindFileExtension (char *FileName)
             Res = FileName;
           FileName++;
         }
-    return Res;
+    return Res;*/
   }
 
 void StrAddExtension (char *Filename, char *Extension)
@@ -1072,9 +1111,7 @@ void StrAddExtension (char *Filename, char *Extension)
     p = StrFindFileExtension (Filename);
     if (!p)   // no extension
       {
-        p = Filename;
-        while (*p)
-          p++;
+        p = StrPos (Filename, (char) 0);
         StrCat (&p, Extension);
         *p = 0;
       }
@@ -1913,8 +1950,6 @@ void DirRead (_DirItem **Dir, _ReadDirCallback CallBack)
       free (New);
   }
 
-extern void DebugAdd (const char *St, int Err);
-
 bool CurrentDateTimeToStr (char **St, bool Date, bool Time)
   {
     tm DateTime;
@@ -1938,12 +1973,14 @@ bool CurrentDateTimeToStr (char **St, bool Date, bool Time)
     return false;
   }
 
-void Log (char *Filename, char *Line)
+bool Log (char *Filename, char *Line)
   {
     char *Name, *x;
     tm DateTime;
     int File;
+    bool Res;
     //
+    Res = false;
     Name = (char *) malloc (Max (StrLen (Line) + 16, 2 * StrLen (Filename) + 32));
     x = Name;
     StrCat (&x, Filename);
@@ -1959,28 +1996,28 @@ void Log (char *Filename, char *Line)
         NumToStr (&x, DateTime.tm_year, 4 | DigitsZeros);
         NumToStr (&x, DateTime.tm_mon + 1, 2 | DigitsZeros);
         NumToStr (&x, DateTime.tm_mday, 2 | DigitsZeros);
+        StrCat (&x, ".TXT");
+        *x = 0;
+        // was File = SDL_RWFromFile (Name, "a");   // Open the log file
+        File = FileOpen (Name, foAppend);   // Open the log file
+        if (File >= 0)
+          {
+            x = Name;
+            NumToStr (&x, DateTime.tm_hour, 2 | DigitsZeros);
+            NumToStr (&x, DateTime.tm_min, 2 | DigitsZeros);
+            *x++ = ':';
+            NumToStr (&x, DateTime.tm_sec, 2 | DigitsZeros);
+            *x++ = '\t';
+            StrCat (&x, Line);
+            *x++ = '\r';
+            *x++ = '\n';
+            FileWrite (File, (byte *) Name, x - Name);
+            FileClose (File);
+            Res = true;
+          }
       }
-    StrCat (&x, ".TXT");
-    *x = 0;
-    // was File = SDL_RWFromFile (Name, "a");   // Open the log file
-    File = FileOpen (Name, foAppend);   // Open the log file
-    if (File >= 0)
-      {
-        x = Name;
-        NumToStr (&x, DateTime.tm_hour, 2 | DigitsZeros);
-        NumToStr (&x, DateTime.tm_min, 2 | DigitsZeros);
-        *x++ = ':';
-        NumToStr (&x, DateTime.tm_sec, 2 | DigitsZeros);
-        *x++ = '\t';
-        StrCat (&x, Line);
-        *x++ = '\r';
-        *x++ = '\n';
-        FileWrite (File, (byte *) Name, x - Name);
-        FileClose (File);
-      }
-    else
-      DebugAdd ("Log: Open: Error", errno);
     free (Name);
+    return Res;
   }
 
 void StrPathHome (char **St, char *Filename)
