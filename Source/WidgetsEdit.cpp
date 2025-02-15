@@ -325,8 +325,8 @@ void _EditCommon::DrawCustom (void)
     //
     if (!Text)
       return;
-    Time1 = Time2 = Time3 = 0;
-    int Tick = ClockMS ();//####
+    //Time1 = Time2 = Time3 = 0;
+    //int Tick = ClockMS ();//####
     /*if (RenderFlags & rRedrawPart)
       if (RedrawTo == -1)
         DebugAdd ("Text Redraw Part - no range"); //####
@@ -378,10 +378,10 @@ void _EditCommon::DrawCustom (void)
     if (!Multiline)
       DrawBezel (2);
     RedrawFrom = RedrawTo = -1;
-    DebugAddInt ("Edit Draw time (mS) ", ClockMS () - Tick); //####
+    /* DebugAddInt ("Edit Draw time (mS) ", ClockMS () - Tick); //####
     DebugAddInt ("EditDraw RenderBitmap time (uS) ", Time1); //####
     DebugAddInt ("EditDraw RenderBitmap make trans masks time (uS) ", Time2); //####
-    DebugAddInt ("EditDraw RenderBitmap put up img time (uS) ", Time3); //####
+    DebugAddInt ("EditDraw RenderBitmap put up img time (uS) ", Time3); //#### */
   }
 
 bool _EditCommon::ProcessKeyDown (_Event *Event, _Font *Font_)

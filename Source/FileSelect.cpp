@@ -21,6 +21,7 @@ class _FormFileSelect: public _Form
     public:
       _FormFileSelect (char *Title, _Rect Position, bool SaveFile, _ActionResultChars ActionFileSelected_);
       ~_FormFileSelect (void);
+      int ColDir;
       _Label *lPath;
       _Container *cToolbar;
       _Edit *eNewFilename;
@@ -88,7 +89,7 @@ void FilesCellDraw (_GridView *Grid, int x, int y, _Rect Rect)
         if (ListGoto (Form->Dir, y - 1, &Form->CurrentIndex, &Form->CurrentItem))
           {
             if (Form->CurrentItem->Directory)
-              Form->Grid->ColourText = ColourAdjust (cBlue, 120);
+              Form->Grid->ColourText = ColourAdjust (Form->ColDir, 120);
             if (x == 0)
               {
                 s = St;
@@ -124,13 +125,10 @@ char* CellRead (_GridView *Grid, int x, int y)
 void ActionFileSelectSave (_Container *Container)
   {
     _FormFileSelect *Form;
-    _Button *b;
     //
     Form = (_FormFileSelect *) Container->Form;
-    b = (_Button *) Container;
-    if (!b->Down)
-      if (StrLen (Form->eNewFilename->TextGet ()) > 0)
-        Form->ActionSelection ();
+    if (StrLen (Form->eNewFilename->TextGet ()) > 0)
+      Form->ActionSelection ();
   }
 
 _FormFileSelect::_FormFileSelect (char *Title, _Rect Position, bool SaveFile_, _ActionResultChars ActionFileSelected_)
@@ -142,9 +140,11 @@ _FormFileSelect::_FormFileSelect (char *Title, _Rect Position, bool SaveFile_, _
     Container->FontSet (NULL, 16);
     Dir = NULL;
     SaveFile = SaveFile_;
+    ColDir = cBlue;
     Container->FontSet (NULL, 14);
     y = 0;
     lPath = new _Label (Container, {4, y, 0, 24}, NULL); y += lPath->Rect.Height;
+    lPath->Colour = ColourAdjust (ColDir, 180);
     if (SaveFile)
       {
         cToolbar = new _Container (Container, {0, y, 0, 32}); y += cToolbar->Rect.Height;
@@ -189,7 +189,6 @@ void _FormFileSelect::DirFill (void)
   {
     char *Path;
     //
-    Path = NULL;
     if (GetCurrentPath (&Path))
       {
         lPath->TextSet (Path);

@@ -22,7 +22,7 @@ const int FontScale = 64;
 
 extern void DebugAdd (const char *St);
 extern void DebugAddS (const char *s1, const char *s2);
-extern void DebugAdd (const char *St, int n);
+extern void DebugAddInt (const char *St, int i);
 extern void DebugAddP (const char *St, _Point p);
 extern void DebugAddR (const char *St, _Rect *r);
 
@@ -104,6 +104,8 @@ _Point FreeTypeMeasureString (char *St, _Font *Font, int *Index = NULL, int Sear
     int x_, x__;
     //
     Face = (FT_Face) Font->Typeface;
+    FT_Select_Charmap (Face , ft_encoding_unicode);
+    //FT_Error err =  FT_Set_Pixel_Sizes (Face, 20, 20);//####
     St__ = St_ = St;
     x__ = x_ = 0;
     Size = {0, 0};
@@ -125,6 +127,8 @@ _Point FreeTypeMeasureString (char *St, _Font *Font, int *Index = NULL, int Sear
             if (Ch_ < 0)   // Invalid UTF8 character
               break;
             GlyphIndex = FT_Get_Char_Index (Face, Ch_);
+            //if (GlyphIndex == 0)
+            //  DebugAddInt ("Text: GlyphIndex == 0. Char = ", Ch_);
             if (FT_Load_Glyph (Face, GlyphIndex, LoadMode (Font->Style)))
               break;
             //if (FT_Render_Glyph (((FT_Face) Font->Typeface)->glyph, RenderMode (Font->Style)))

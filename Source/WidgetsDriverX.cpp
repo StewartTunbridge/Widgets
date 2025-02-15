@@ -22,7 +22,7 @@
 
 extern void DebugAdd (const char *St);   // defined in application
 extern void DebugAddS (const char *s1, const char *s2);   // defined in Widgets.cpp
-extern void DebugAdd (const char *St, int n);
+extern void DebugAddInt (const char *St, int n);
 extern void DebugAddR (const char *St, _Rect *r);
 extern void DebugAddP (const char *St, _Point p);
 
@@ -42,13 +42,10 @@ typedef struct
     int Width, Height;
     Pixmap Image;
     Pixmap Mask;
-    //@@@@GC gc;
-    //@@@@GC gcMask;
   } __Texture;
 
 typedef struct
   {
-    //Display *XDisplay;
     int XScreen;
     int XDepth;
     Visual *XVisual;
@@ -69,6 +66,7 @@ bool ForceSoftwareRendering = false;
 
 Display *XDisplay = NULL;
 Window XWindow = 0;
+Atom wm_delete_window;// = XInternAtom (XDisplay, "WM_DELETE_WINDOW", False);
 
 
 /////////////////////////////////////////////////////////////////////////
@@ -244,11 +242,9 @@ XColor MouseCursorCol = {0, 0, 0, 0, 0, 0};
 
 _Point MousePos (void)
   {
-    //return {50, 50}; //####
     Window root, child;
     int rootX, rootY, winX, winY;
     unsigned int mask;
-    //XQueryPointer (XDisplay, DefaultRootWindow (XDisplay), &root, &child, &rootX, &rootY, &winX, &winY, &mask);
     XQueryPointer (XDisplay, XWindow, &root, &child, &rootX, &rootY, &winX, &winY, &mask);
     return {rootX, rootY};
   }
@@ -283,8 +279,9 @@ bool WidgetsInit (void)
   {
     XSetErrorHandler (ErrorHandler);
     XDisplay = XOpenDisplay (NULL);
-	  // slows things if true XSynchronize (XDisplay, false);   // make operations asynchronous
-	  return true;
+    wm_delete_window = XInternAtom (XDisplay, "WM_DELETE_WINDOW", False);
+    // slows things if true XSynchronize (XDisplay, false);   // make operations asynchronous
+    return true;
   }
 
 bool WidgetsUninit (void)
@@ -386,13 +383,15 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
   {
     __Window *Res;
     bool OK;
-    //XSizeHints *sh;
+    int x_, y_;
+    Window w;
     int Width, Height;
     Atom window_type;
     long value;
     //
     OK = false;
     Res = (__Window *) malloc (sizeof (__Window));
+    *Res = {0};
     if (XDisplay)
       {
         Res->WindowAttributes = WindowAttributes;
@@ -418,7 +417,7 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
             SizeX_ = Width;
             SizeY_ = Height;
           }
-        Res->XWindow = XCreateSimpleWindow (XDisplay, RootWindow (XDisplay, Res->XScreen), x, y, SizeX_, SizeY_, 0, BlackPixel (XDisplay, Res->XScreen), WhitePixel (XDisplay, Res->XScreen));
+        Res->XWindow = XCreateSimpleWindow (XDisplay, RootWindow (XDisplay, Res->XScreen), 0, 0, SizeX_, SizeY_, 0, BlackPixel (XDisplay, Res->XScreen), WhitePixel (XDisplay, Res->XScreen));
         if (Res->XWindow)
           {
             if (XWindow == 0)
@@ -439,7 +438,6 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
             Res->pIcon = 0;
             //
             // Trap window close messages
-            Atom wm_delete_window = XInternAtom (XDisplay, "WM_DELETE_WINDOW", False);
             XSetWMProtocols (XDisplay, Res->XWindow, &wm_delete_window, 1);
             //
             if (~WindowAttributes & waResizable)
@@ -499,7 +497,6 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
               ButtonPressMask | ButtonReleaseMask |
               PointerMotionMask | //SubstructureNotifyMask | //####
               StructureNotifyMask);   // Specify what Events we get
-            //XMapWindow (XDisplay, Res->XWindow);   // Display Window
             if (Title)
               XStoreName (XDisplay, Res->XWindow, Title);   // Set Title Name
             //XSetInputFocus (Res->XDisplay, Res->XWindow, RevertToNone, CurrentTime);
@@ -557,31 +554,45 @@ bool WindowSetIcon (_Window *Window, _Bitmap *Bitmap)
     return true;
   }
 
-bool WindowSetPosSize (_Window *Window, int x, int y, int Width, int Height)
+bool WindowSetPosSize (_Window *Win, int x, int y, int Width, int Height)
   {
     __Window *Window_;
+    int x_, y_;
+    Window w;
     //
-    Window_ = (__Window *) Window;
+    Window_ = (__Window *) Win;
     if (x >= 0 && y >= 0)
-      XMoveWindow (XDisplay, Window_->XWindow, x, y);
+      {
+        XMoveWindow (XDisplay, Window_->XWindow, x, y);
+        //DebugAddP ("XSetPos", {x, y});???
+        //XTranslateCoordinates (XDisplay, DefaultRootWindow (XDisplay), Window_->XWindow, x, y, &x_, &y_, &w);
+        //DebugAddP ("XSetPosTrans", {x_, y_});
+        //XTranslateCoordinates (XDisplay, Window_->XWindow, DefaultRootWindow (XDisplay), x, y, &x_, &y_, &w);
+        //XMoveWindow (XDisplay, Window_->XWindow, x_, y_);
+      }
     if (Width >= 0 && Height >= 0)
       XResizeWindow (XDisplay, Window_->XWindow, Width, Height);
-    //XMoveResizeWindow (Window_->XDisplay, Window_->XWindow, x, y, Width, Height);
-    //XResizeWindow (XDisplay, Window_, Width, Height);
     return true;
   }
 
-void WindowGetPosSize (_Window *Window, int *x, int *y, int *Width, int *Height)
+void WindowGetPosSize (_Window *Win, int *x, int *y, int *Width, int *Height)
   {
     __Window *Window_;
     XWindowAttributes  wa;
+    int x_, y_;
+    unsigned int w_, h_;
+    unsigned int b_, d_;
+    Window w;
     //
-    Window_ = (__Window *) Window;
-    XGetWindowAttributes (XDisplay, Window_->XWindow, &wa);
+    Window_ = (__Window *) Win;
+    //XGetGeometry (XDisplay, Window_->XWindow, &w, &x_, &y_, &w_, &h_, &b_, &d_);
+    //DebugAddP ("XGetWinAtt:", {wa.x, wa.y}); //####
+    XTranslateCoordinates (XDisplay, Window_->XWindow, DefaultRootWindow (XDisplay), 0, 0, &x_, &y_, &w);
+    XGetWindowAttributes (XDisplay, Window_->XWindow, &wa); //w
     if (x)
-      *x = wa.x;
+      *x = x_ - wa.x;
     if (y)
-      *y = wa.y;
+      *y = y_ - wa.y;
     if (Width)
       *Width = wa.width;
     if (Height)
@@ -772,7 +783,7 @@ void EventPoll (_Event *Event)
         //
         //#define DebugShowXEvents
         #ifdef DebugShowXEvents
-        DebugAdd ("XEvent: ", e.type);
+        DebugAddInt ("XEvent: ", e.type);
         #endif // DebugShowXEvents
         if (e.type == Expose)
           Event->Type = etWindowRedraw;
@@ -783,7 +794,11 @@ void EventPoll (_Event *Event)
             Event->Y = e.xconfigure.height;
           }
         else if (e.type == ClientMessage)   // Close Window?
-          Event->Type = etWindowClose;
+          {
+            //if (StrSame (XGetAtomName (XDisplay, e.xclient.message_type), "WM_PROTOCOLS"))   // makes no difference
+            if (e.xclient.data.l [0] == wm_delete_window)
+              Event->Type = etWindowClose;
+          }
         else if (e.type == KeyPress || e.type == KeyRelease)
           {
             /*Len =*/ XLookupString (&e.xkey, s, sizeof (s), &ks, NULL);

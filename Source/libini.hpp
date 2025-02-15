@@ -43,11 +43,12 @@ class _Strings : public _Collection
 class _INI : public _Strings
   {
     private:
+      char *Filename;
       char *KeyFind (char *Key, int *Item);
     public:
       _INI (char *Filename);
       ~_INI (void);
-      char *Read (char *Key);
+      char *Read (char *Key, char *ValueDefault);
       int ReadNum (char *Key, int ValueDefault);
       bool Write (char *Key, char *Value);
       bool WriteNum (char *Key, int Value);

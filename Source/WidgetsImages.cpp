@@ -71,10 +71,10 @@ _Bitmap *LoadBMP (_Window *Window, char *Filename)
                     bytepad = bytepl - ((bpp * sizeX + 7) >> 3);
                     //####
                     DebugAddS ("LoadBMP", Filename);
-                    DebugAddInt ("sizeX", sizeX);
-                    DebugAddInt ("SizeY", sizeY);
-                    DebugAddInt ("bits/pixel", bpp);
-                    DebugAddInt ("bytes/pixel", bytepp);
+                    DebugAddInt ("  SizeX", sizeX);
+                    DebugAddInt ("  SizeY", sizeY);
+                    DebugAddInt ("  bits/pixel", bpp);
+                    DebugAddInt ("  bytes/pixel", bytepp);
                     if (sizeX && sizeY && bpp && pixels < size && comp == 0 && bpp >= 4)
                       {
                         Img = BitmapCreate (Window, sizeX, sizeY);

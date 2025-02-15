@@ -238,7 +238,7 @@ void _GridView::DrawCustom (void)
     *ps = 0;
     DebugAdd (s);*/
     //
-    int tick = ClockMS (); //####
+    //int tick = ClockMS (); //####
     ColLockBG = Parent->ColourFind ();
     ColGrid = ColourAdjust (cForm1, 150);
     ColGridFocus = ColourAdjust (ColourTextFind (), 140);
@@ -328,7 +328,7 @@ void _GridView::DrawCustom (void)
     Font_->Style = Style;
     ScrollBarsDraw (ScrollBars, CellOffset, {Columns - Locked.x, Rows - Locked.y});
     DrawCellsClear ();
-    DebugAddInt ("Grid Draw time (mS) ", ClockMS () - tick); //####
+    //DebugAddInt ("Grid Draw time (mS) ", ClockMS () - tick); //####
   }
 
 bool _GridView::ProcessEventCustom (_Event *Event, _Point Offset)

@@ -705,18 +705,13 @@ bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecD
     __Window *Window_;
     SDL_Surface *Surface;
     SDL_Texture *Texture;
-    Uint32 Pixel;
     SDL_Rect s, d;
     //
     Texture = NULL;
     Window_ = (__Window *) Window;
     Surface = (SDL_Surface *) Bitmap;
     if (ColTransparent >= 0)
-      {
-        //Pixel = SurfaceGetPixel (Surface, 0, 0);
-        SDL_SetColorKey (Surface, SDL_TRUE, ColTransparent);
-          //SDL_MapRGB (s->format, ColourR (Colour), ColourG (Colour), ColourB (Colour)));
-      }
+      SDL_SetColorKey (Surface, SDL_TRUE, ColTransparent);
     Texture = SDL_CreateTextureFromSurface (Window_->Renderer, Surface);
     //
     RectToSDL_Rect(&RecSource, &s);
@@ -732,9 +727,7 @@ bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecD
 _Bitmap* BitmapFromTexture (_Window *Window, _Texture *Texture, int Width, int Height)
   {
     __Window *Window_;
-    SDL_Surface *Info, *Surface;
-    SDL_Rect Rect;
-    SDL_Surface* infoSurface;
+    SDL_Surface *Surface;
     //
     Surface = NULL;
     Window_ = (__Window *) Window;

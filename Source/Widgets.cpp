@@ -47,7 +47,7 @@ int DelCount = 0;
 
 char *HomePath = NULL;
 
-char *AddHomePath (char *Filename)
+char *AddHomePath (const char *Filename)
   {
     char *Res, *r;
     //
@@ -121,10 +121,11 @@ void RectToStr (char **sp, _Rect *Rec)
 
 void DebugAddS (const char *s1, const char *s2)
   {
-    char *s = (char *) malloc (StrLen (s1) + StrLen (s2) + 1);
+    char *s = (char *) malloc (StrLen (s1) + StrLen (s2) + 2);
     char *p = s;
     if (s1)
       StrCat (&p, s1);
+    StrCat (&p, ' ');
     if (s2)
       StrCat (&p, s2);
     *p = 0;
@@ -241,8 +242,8 @@ int GetBitmapIndex (char Ch)
   {
     if (IsDigit (Ch))
       return Ch - '0';
-    if (IsUpper (Ch))
-      return Ch - 'A' + 10;
+    if (IsAlpha (Ch))
+      return UpCase (Ch) - 'A' + 10;
     return -1;
   }
 
@@ -276,7 +277,9 @@ int DrawTextBitmap (_Window *Window, int Index, int x, int y, int FontHeight)
     return Res;
   }
 
-bool EditLinesTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *Posn, _Point *Size)
+int ColourTable [8] = {cBlack, cRed, cGreen, cRed|cGreen, cBlue, cBlue|cRed, cBlue|cGreen, cWhite};
+
+bool LabelEditTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *Posn, _Point *Size)
   {
     int w;
     int bi;
@@ -295,32 +298,43 @@ bool EditLinesTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *P
           RenderFillRect (Window, {Posn->x - w / 2, Posn->y, w, Font->YAdvance}, Font->Colour);
           CursorLocation = *Posn;
         }
-    // Bitmap / Bold / Italic / Underline
+    // Bitmap / Bold / Italic / Underline ...
     while (true)
       {
-        if (**Text != '\e')   // escape
-          break;
-        (*Text)++;
-        c = **Text;
-        (*Text)++;
-        bi = GetBitmapIndex (c);
-        if (bi >= 0)
+        if (**Text == '\e')   // escape => draw Bitmap
           {
-            if (Window && Posn)
-              Posn->x += DrawTextBitmap (Window, bi, Posn->x, Posn->y, Font->YAdvance);
-            else if (Size)
+            (*Text)++;
+            c = **Text;
+            (*Text)++;
+            bi = GetBitmapIndex (c);
+            if (bi >= 0)
               {
-                bsz = DrawTextBitmap (0, bi, 0, 0, 0);
-                Size->x += bsz;
-                Size->y = Max (Size->y, bsz);
+                if (Window && Posn)
+                  Posn->x += DrawTextBitmap (Window, bi, Posn->x, Posn->y, Font->YAdvance);
+                else if (Size)
+                  {
+                    bsz = DrawTextBitmap (0, bi, 0, 0, 0);
+                    Size->x += bsz;
+                    Size->y = Max (Size->y, bsz);
+                  }
               }
           }
-        else if (c == 'b')
-          Font->Style ^= fsBold;
-        else if (c == 'i')
-          Font->Style ^= fsItalic;
-        else if (c == 'u')
-          Font->Style ^= fsUnderline;
+        else if (**Text == '\a')   // ^G => Alter Text: Change Colour, Bold, Italic, Underline ...
+          {
+            (*Text)++;
+            c = UpCase (**Text);
+            (*Text)++;
+            if (c >= '0' && c <= '7')   // Change colour
+              Font->Colour ^= ColourTable [c - '0'];
+            else if (c == 'B')
+              Font->Style ^= fsBold;
+            else if (c == 'I')
+              Font->Style ^= fsItalic;
+            else if (c == 'U')
+              Font->Style ^= fsUnderline;
+          }
+        else
+          break;
       }
     // Selection?
     if (Window && Posn)
@@ -359,8 +373,7 @@ bool EditLinesTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *P
 
 void _Form::CreateContainer (char *Title)
   {
-    int Width;
-    int Height;
+    int Width, Height;
     //
     if (!Container)
       if (Window)
@@ -396,7 +409,7 @@ _Form::_Form (char *Title, _Rect Pos, byte WindowAttributes_)  // : _List (&Form
     if (WindowCount++ == 0)
       {
         WidgetsInit ();
-        TextCallBack = &EditLinesTextCallBack;
+        TextCallBack = &LabelEditTextCallBack;
         GetCurrentPath (&HomePath);
       }
     Container = NULL;
@@ -1009,7 +1022,7 @@ void _Container::DrawCustom (void)
       DrawRectangle ({0, 0, Rect.Width, Rect.Height}, cRed, cRed, -1);
   }
 
-bool _Container::FontSet (char *FontFile, int Size, byte Style)
+bool _Container::FontSet (const char *FontFile, int Size, byte Style)
   {
     _Font *Font_;
     char *s;
@@ -1399,6 +1412,7 @@ _Point _Container::TextMeasure (_Font *Font_, char *Text)
   {
     _Point Size;
     byte Style_;
+    int cFG, cBG;
     //
     if (Font_ == NULL)
       Font_ = FontFind ();
@@ -1408,21 +1422,21 @@ _Point _Container::TextMeasure (_Font *Font_, char *Text)
       {
         TextCallBackBitmap = BitmapFind ();
         Style_ = Font_->Style;
+        cFG = Font_->Colour;
+        cBG = Font_->ColourBG;
         Size = TextSize (Font_, Text);
         Font_->Style = Style_;
+        Font_->Colour = cFG;
+        Font_->ColourBG = cBG;
       }
     return Size;
   }
-
-//const int OutlineX [] = {-1,  1, -1, 1,  -1, 1,  0, 0}; //{0, 2, 0, 2};
-//const int OutlineY [] = {-1, -1,  1, 1,   0, 0, -1, 1}; //{0, 0, 2, 2};
 
 void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Align, _Align AlignVert)
   {
     _Point Size;
     int dX, dY;
-    int cFG, cBG;
-    //byte stl;
+    int cBG;
     //
     if (Text == NULL)
       return;
@@ -1431,9 +1445,6 @@ void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Al
     if (Font_ == NULL)
       return;
     TextCallBackBitmap = BitmapFind ();
-    cFG = Font_->Colour;
-    cBG = Font_->ColourBG;
-    //stl = Font_->Style;
     if (Font_->Colour < 0)
       Font_->Colour = ColourTextFind ();
     if (!IsEnabled ())
@@ -1455,15 +1466,15 @@ void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Al
       Rect.y += dY / 2;
     else if (AlignVert == aRight)
       Rect.y += dY;
+    cBG = Font_->ColourBG;
     if (cBG < 0)
       Font_->ColourBG = ColourFind ();
     if (Font_->Style & fsRotate)
       TextRender (Form->Window, Font_, Text, {Rect.x + RenderTargetOffset.x, Rect.y + Size.x - 1 + RenderTargetOffset.y});
     else
       TextRender (Form->Window, Font_, Text, {Rect.x + RenderTargetOffset.x, Rect.y + RenderTargetOffset.y});
-    Font_->Colour = cFG;
-    Font_->ColourBG = cBG;
-    //Font_->Style = ???(Font_->Style ^ stl) & (fsBold | fsItalic | fsUnderline); //|= stl & (fsShadow | fsOutline);
+    if (cBG < 0)   // restore transparent BG (if it was)
+      Font_->ColourBG = -1;
   }
 
 // Word wrap text out.  !Write => measure only
@@ -1474,7 +1485,6 @@ void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, b
     char *StSub;   // Copy of St
     _Point Size;
     char *Split;
-    //char *Param;
     char c;
     //
     if (St)
@@ -1485,14 +1495,6 @@ void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, b
         BOW = 0;
         while (St [BOL])
           {
-            /*if (BOW == BOL)   // Start of line
-              if (St [BOL] == '~')   // Change Colour
-                {
-                  Param = &St [BOL + 1];
-                  Colour_ = StrGetNumBaseFixed (&Param, 6, 16);
-                  BOL = Param - St;
-                  BOW = BOL;
-                }*/
             EOW = BOW;
             while (true)
               {
@@ -1548,15 +1550,17 @@ void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, b
 // Text out wrapping at words. Force wrap at \n. Split line full justify at \t
 void _Container::TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert)
   {
-    _Font *Font;
+    _Font *Font_;
     _Point Size;
     int x, y, gapX, gapY;
+    int cFG, cBG;
+    byte Style;
     //
-    Font = FontFind ();
-    if (Font)
-      if (Font->Style & fsRotate)
+    Font_ = FontFind ();
+    if (Font_)
+      if (Font_->Style & fsRotate)
         {
-          Size = TextMeasure (Font, Text);
+          Size = TextMeasure (Font_, Text);
           gapX = (Rect.Width - Size.y);
           gapY = (Rect.Height - Size.x);
           x = Rect.x;
@@ -1569,11 +1573,14 @@ void _Container::TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align Align
             x += gapX / 2;
           else if (AlignVert == aRight)
             x += gapX;
-          TextOutAligned (Font, {x, y, 0, 0}, Text, aLeft, aLeft);
+          TextOutAligned (Font_, {x, y, 0, 0}, Text, aLeft, aLeft);
           //DrawRectangle ({x, y, Size.y, Size.x}, cRed, cRed, -1); //####
         }
       else
         {
+          cFG = Font_->Colour;
+          cBG = Font_->ColourBG;
+          Style = Font_->Style;
           y = Rect.y;
           if (AlignVert == aLeft)   // Top
             TextOutWrap_ (Rect, Text, Align, &y, true);
@@ -1587,6 +1594,9 @@ void _Container::TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align Align
                 y = Rect.y + Rect.Height - y;
               TextOutWrap_ (Rect, Text, Align, &y, true);
             }
+          Font_->Colour = cFG;
+          Font_->ColourBG = cBG;
+          Font_->Style = Style;
         }
   }
 
@@ -2406,48 +2416,56 @@ bool _Button::ProcessEventCustom (_Event *Event, _Point Offset)
     HoverOld = Hover;
     if (IsEventMine (Event, Offset))   // Either by location OR Forced
       {
-        if (Event->Type == etMouseDown && Event->Key == KeyMouseLeft)   // Left Mouse Down
-          {
-            Res = true;
-            Flag = Down;
-            Down = true;
-            if (Grouped)   // Check for grouped
-              if (Parent && Parent->Children)
-                {
-                  Sibling = Parent->Children;
-                  while (Sibling)
-                    {
-                      if (Sibling != this)
-                        {
-                          SiblingButton = dynamic_cast <_Button *> (Sibling);
-                          if (SiblingButton)
-                            if (SiblingButton->Down && SiblingButton->Grouped)
-                              {
-                                SiblingButton->Down = false;
-                                SiblingButton->Flag = false;
-                                SiblingButton->Invalidate (true);
-                                if (SiblingButton->Action)
-                                  SiblingButton->Action (Sibling);
-                              }
-                        }
-                      Sibling = Sibling->Next;
-                    }
-                }
-            Form->EventLock = this;
-          }
-        else if (Event->Type == etMouseUp && Event->Key == KeyMouseLeft)   // Mouse Up
-          {
-            Res = true;
-            if (Toggle)
-              Down = !Flag;
-            else   // not Toggle
-              Down = Grouped;
-          }
+        if (Event->Key == KeyMouseLeft)   // Left Mouse Down
+          if (Event->Type == etMouseDown)   // Left Mouse Down
+            {
+              Res = true;
+              Flag = Down;
+              Down = true;
+              if (Grouped)   // Check for grouped
+                if (Parent && Parent->Children)
+                  {
+                    Sibling = Parent->Children;
+                    while (Sibling)
+                      {
+                        if (Sibling != this)
+                          {
+                            SiblingButton = dynamic_cast <_Button *> (Sibling);
+                            if (SiblingButton)
+                              if (SiblingButton->Down && SiblingButton->Grouped)
+                                {
+                                  SiblingButton->Down = false;
+                                  SiblingButton->Flag = false;
+                                  SiblingButton->Invalidate (true);
+                                  if (SiblingButton->Action)
+                                    SiblingButton->Action (Sibling);
+                                }
+                          }
+                        Sibling = Sibling->Next;
+                      }
+                  }
+              Form->EventLock = this;
+            }
+          else if (Event->Type == etMouseUp)   // Left Mouse Up
+            {
+              Res = true;
+              if (Toggle)
+                Down = !Flag;
+              else   // not Toggle
+                Down = Grouped;
+            }
+        if (!Toggle && !Grouped)   // ie normal switch
+          if (!IsEventWithin (Event, Offset))   // but moved off the button
+            {
+              Down = DownOld = false;   // so cancel the action
+              Invalidate (true);
+            }
         if (Down != DownOld)   // Changed so Redraw and Action
           {
             Invalidate (true);
-            if (Action)   // Call Handler
-              Action (this);
+            if (!Down || Toggle || Grouped)
+              if (Action)   // Call Handler
+                Action (this);
           }
         if (ButtonStyle != bsNormal)
           {
@@ -2455,7 +2473,7 @@ bool _Button::ProcessEventCustom (_Event *Event, _Point Offset)
             if (Hover != HoverOld)
               Invalidate (true);
           }
-        if (Hover || Event->MouseKeys)
+        if (Hover || Event->MouseKeys & Bit [KeyMouseLeft - 1])   // Lock if Left key down
           Form->EventLock = this;
         else
           Form->EventLock = NULL;
@@ -2669,6 +2687,17 @@ void _LabelNumber::DrawCustom (void)
     DrawBorder (Border, 0);
   }
 
+int _LabelNumber::ValueGet (void)
+  {
+    return Value;
+  }
+
+void _LabelNumber::ValueSet (int Value_)
+  {
+    Value = Value_;
+    Invalidate (true);
+  }
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -2695,7 +2724,7 @@ void _LabelMoney::DrawCustom (void)
     if (Value < 0)
       *x++ = '(';
     *x++ = '$';
-    NumToStrDecimals (&x, abs (Value), 2);
+    IntToStrDecimals (&x, abs (Value), 2);
     if (Value < 0)
       *x++ = ')';
     StrCat (&x, Text);
@@ -2967,6 +2996,9 @@ _Slider::_Slider (_Container *Parent, _Rect Rect_, int Min, int Max, _Action Act
     ColourKnob = Colour;
     ValueMin = Min;
     ValueMax = Max;
+    Sections = 0;
+    if (Max - Min < 16)
+      Sections = Max - Min;   // Number of sections to be Marked. Num Marks = Sections + 1
     Value = ValueMin;
     Action = Action_;
     Vertical = Rect.Height > Rect.Width;
@@ -3031,16 +3063,36 @@ bool _Slider::ProcessEventCustom (_Event *Event, _Point Offset)
 void _Slider::DrawCustom (void)
   {
     int hx, hy;
+    int ColSlot, ColKnob, ColTick;
+    int x, y, s;
     int Pos;
     _Rect Knob;
-    int ColSlot, ColKnob;
     //
     hx = Rect.Width / 2;
     hy = Rect.Height / 2;
     ColSlot = ColourFind ();
     ColKnob = ColourKnob;
+    ColTick = ColourAverage (ColourTextFind (), ColSlot);
     if (ColKnob < 0)
       ColKnob = ColSlot;
+    // Draw Markers
+    if (Sections > 0)
+      {
+        for (s = 0; s <= Sections; s++)
+          if (Vertical)
+            {
+              y = s * (Rect.Height - 2 * SliderMargin) / Sections + SliderMargin;
+              DrawLine (hx - SliderMargin, y, hx - 3 * SliderMargin / 4, y, ColTick, 1);
+              DrawLine (hx + SliderMargin, y, hx + 3 * SliderMargin / 4, y, ColTick, 1);
+            }
+          else   // Horizontal
+            {
+              x = s * (Rect.Width - 2 * SliderMargin) / Sections + SliderMargin;
+              DrawLine (x, hy - SliderMargin, x, hy - 3 * SliderMargin / 4, ColTick, 1);
+              DrawLine (x, hy + SliderMargin, x, hy + 3 * SliderMargin / 4, ColTick, 1);
+            }
+      }
+    // Draw Slot, setup Knob
     if (Vertical)
       {
         DrawBorder ({hx, SliderMargin, 0, Rect.Height - 2 * SliderMargin}, bMote, ColSlot, 0);
@@ -3053,9 +3105,21 @@ void _Slider::DrawCustom (void)
         Pos = (Rect.Width - 2 * SliderMargin) * (Value - ValueMin) / (ValueMax - ValueMin);
         Knob = {Pos, hy - 2 * SliderMargin, 2 * SliderMargin, 4 * SliderMargin};
       }
+    // Draw Knob  <===3
     DrawRectangle (Knob, -1, -1, ColKnob);
     DrawBorder (Knob, bRaised, ColKnob, 0);
     DrawBorder (Knob, bRaised, ColKnob, 1);
+  }
+
+int _Slider::ValueGet (void)
+  {
+    return Value;
+  }
+
+void _Slider::ValueSet (int Value_)
+  {
+    Value = Value_;
+    Invalidate (true);
   }
 
 
@@ -3121,18 +3185,21 @@ bool _Knob::ProcessEventCustom (_Event *Event, _Point Offset)
 void _Knob::DrawCustom (void)
   {
     int Rad;
-    int c0, cf;
+    int c0, cf, cm;
     int angle, i;
     int Margin;
     //
     Rad = Min (Rect.Width, Rect.Height) / 3;
     c0 = ColourFind ();
     cf = ColourTextFind ();
+    cm = ColourAverage (c0, cf);
+    // Draw MArkers
     for (i = 0; i < Markers; i++)
       {
         angle = (180 + 45) - (i * (360 - 90) + (Markers / 2)) / (Markers - 1);
-        DrawRadius (Rect.Width / 2, Rect.Width / 2, Rad + 4, Rad + 4, angle, cf, 1);
+        DrawRadius (Rect.Width / 2, Rect.Width / 2, Rad + 4, Rad + 4, angle, cm, 1);
       }
+    // Draw Knob
     DrawCircle (Rect.Width / 2, Rect.Width / 2, Rad, c0, -1, 2, 60); //ColourAdjust (c0, 120)
     angle = 180 + 45 - (Value - ValueMin) * (360 - 90) / (ValueMax - ValueMin);
     DrawRadius (Rect.Width / 2, Rect.Width / 2, Rad / 4, Rad - 3, angle, cf, 2);
@@ -3142,6 +3209,17 @@ void _Knob::DrawCustom (void)
       Margin = TextMargin;
     TextOutWrap ({Margin, 0, Rect.Width - 2 * Margin, Rect.Height - Margin}, Text, aCenter, aRight /*Bottom*/);
     DrawBorder (Border, 0);
+  }
+
+int _Knob::ValueGet (void)
+  {
+    return Value;
+  }
+
+void _Knob::ValueSet (int Value_)
+  {
+    Value = Value_;
+    Invalidate (true);
   }
 
 
@@ -3287,15 +3365,15 @@ void _Image::DrawCustom (void)
 //
 // SELECTION LIST, MENU, POPUP MENU
 
-#define ListMargin 4
+#define ListMargin 6
 
 _SelectionList::_SelectionList (_Container *Parent, _Rect Rect_, char *Text_, _Action Action_) : _Container (Parent, Rect_, Text_)
   {
     _Point Size;
-    int n;
     char *Item, *ps;
     //
     Hovering = -1;
+    ListOffset = 0;
     Selected = -1;
     Align = aLeft;
     Action = Action_;
@@ -3308,7 +3386,7 @@ _SelectionList::_SelectionList (_Container *Parent, _Rect Rect_, char *Text_, _A
       }
     ItemSize = {0, 0};
     ps = Text;
-    n = 0;
+    ListSize = 0;
     while (true)
       {
         Item = StrGetItem (&ps, '\t');
@@ -3318,11 +3396,19 @@ _SelectionList::_SelectionList (_Container *Parent, _Rect Rect_, char *Text_, _A
         ItemSize.x = Max (ItemSize.x, Size.x);
         ItemSize.y = Max (ItemSize.y, Size.y);
         free (Item);
-        n++;
+        ListSize++;
       }
+    ListDisplayed = ListSize;
     ItemSize.y += 2 * TextMargin;
     Rect.Width = ItemSize.x + 2 * ListMargin;
-    Rect.Height = ItemSize.y * n + 2 * ListMargin;
+    Rect.Height = ItemSize.y * ListSize + 2 * ListMargin;
+    while (Rect.Height > Parent->Rect.Height)
+      {
+        Rect.Height -= ItemSize.y;
+        ListDisplayed--;
+      }
+    if (Rect.x + Rect.Width > Parent->Rect.Width)
+      Rect.x = Parent->Rect.Width- Rect.Width;
     if (Rect.y + Rect.Height > Parent->Rect.Height)
       Rect.y = Parent->Rect.Height - Rect.Height;
     Form->EventLock = this;
@@ -3330,56 +3416,81 @@ _SelectionList::_SelectionList (_Container *Parent, _Rect Rect_, char *Text_, _A
 
 void _SelectionList::DrawCustom (void)
   {
-    int i, y;
+    int i, x, y;
     char *Item, *ps;
     _Rect Rec;
    //
     if (!Text)
       return;
+    // Draw List
     i = 0;
-    y = ListMargin;
     ps = Text;
+    y = ListMargin;
     while (true)
       {
         Item = StrGetItem (&ps, '\t');
         if (!Item)
           break;
-        Rec = {0, y, Rect.Width, ItemSize.y};
-        if (i == Hovering)
-          TextOutWrapInverse (Rec, Item, Align, {ListMargin, 0});
-        else
-          TextOutWrap (AddMargin (Rec, {ListMargin, 0}), Item, Align, aCenter);
+        if (i >= ListOffset)   // Skip past the Offset (if List scrolled up)
+          {
+            //DebugAddS ("List Draw Item: ", Item);  //####
+            Rec = {0, y, Rect.Width, ItemSize.y};
+            if (i == Hovering)
+              TextOutWrapInverse (Rec, Item, Align, {ListMargin, 0});
+            else
+              TextOutWrap (AddMargin (Rec, {ListMargin, 0}), Item, Align, aCenter);
+            y += ItemSize.y;
+          }
         free (Item);
-        y += ItemSize.y;
         i++;
+        if (i - ListOffset >= ListDisplayed)
+          break;
       }
+    // Extender arrows
+    x = Rect.Width / 2;
+    if (ListOffset)
+      DrawArrow ({x - 6, 1, 12, ListMargin - 2}, dUp);
+    if (ListSize - ListOffset > ListDisplayed)
+      DrawArrow ({x - 6, Rect.Height - ListMargin + 1, 12, ListMargin - 2}, dDown);
     DrawBorder (bRaised, 0);
   };
 
 bool _SelectionList::ProcessEventCustom (_Event *Event, _Point Offset)
   {
     bool Res;
-    int h;
+    int h, o;
     //
     Res = false;
+    h = Hovering;
+    o = ListOffset;
     if (IsEventMine (Event, Offset))
       if (Event->Type == etMouseMove)
         {
-          h = Hovering;
           if (ItemSize.y > 0 && Event->Y >= Offset.y + ListMargin && Event->Y < Offset.y + Rect.Height - ListMargin)
-            Hovering = (Event->Y - Offset.y - ListMargin) / ItemSize.y;
+            Hovering = ListOffset + (Event->Y - Offset.y - ListMargin) / ItemSize.y;
           else
             Hovering = -1;
-          if (Hovering != h)
-            Invalidate (true);
+          if (Event->Y - Offset.y >= Rect.Height - ListMargin)
+            if (ListSize - ListOffset > ListDisplayed)
+              ListOffset++;
+          if (Event->Y - Offset.y <= ListMargin)
+            if (ListOffset > 0)
+              ListOffset--;
           Res = true;
         }
-      else if (Event->Type == etMouseDown || Event->Type == etMouseUp)   // Selected
+      else if (/*Event->Type == etMouseDown ||*/ Event->Type == etMouseUp)   // Selected
         {
           if (IsEventMine (Event, Offset))
-            Selected = Hovering;
-          if (Action)
-            Action (this);
+            if (Event->Key == KeyMouseLeft || Event->Key == KeyMouseRight)
+              {
+                Selected = Hovering;
+                if (Action)
+                  Action (this);
+              }
+            else if (Event->Key == KeyMouseWheelUp && ListOffset > 0)
+              ListOffset--;
+            else if (Event->Key == KeyMouseWheelDown && ListSize - ListOffset > ListDisplayed)
+              ListOffset++;
           Res = true;
         }
       else if (Event->Type == etKeyDown)
@@ -3390,6 +3501,8 @@ bool _SelectionList::ProcessEventCustom (_Event *Event, _Point Offset)
             Action (this);
           Res = true;
         }
+    if (Hovering != h || ListOffset != o)
+      Invalidate (true);
     return Res;
   }
 
@@ -3441,8 +3554,9 @@ void ActionMenuSelectionList (_SelectionList *SelectionList)
     if (Menu->SelectionList)
       {
         Menu->Selected = SelectionList->Selected;
-        if (Menu->Action)
-          Menu->Action ((_Container *) Menu);
+        if (Menu->Selected >= 0)
+          if (Menu->Action)
+            Menu->Action ((_Container *) Menu);
         Menu->SelectionList->Die ();
         Menu->SelectionList = NULL;
         Menu->Invalidate (true);
@@ -3456,7 +3570,7 @@ bool _Menu::ProcessEventCustom (_Event *Event, _Point Offset)
     Res = false;
     if (List)
       if (IsEventMine (Event, Offset))
-        if (Event->Type == etMouseDown)   // Activate
+        if (Event->Type == etMouseDown && Event->Key == KeyMouseLeft)   // Activate
           {
             SelectionList = new _SelectionList (Form->Container, {Offset.x, Offset.y + Rect.Height, 0, 0}, List, (_Action) ActionMenuSelectionList);
             SelectionList->DataContainer = this;   // remember where we came from
@@ -3470,6 +3584,7 @@ _MenuPopup::_MenuPopup (_Container *Parent, _Rect Rect_, char *Text_, _Action Ac
   {
     Action = Action_;
     SelectionList = NULL;
+    FontForm = NULL;
   }
 
 void ActionMenuPopupSelectionList (_SelectionList *SelectionList)
@@ -3477,11 +3592,14 @@ void ActionMenuPopupSelectionList (_SelectionList *SelectionList)
     _MenuPopup *MenuPopup;
     //
     MenuPopup = (_MenuPopup *) SelectionList->DataContainer;
+    if (MenuPopup->FontForm)   // Restore Font
+      MenuPopup->Form->Container->Font = MenuPopup->FontForm;
     if (MenuPopup->SelectionList)
       {
         MenuPopup->Selected = SelectionList->Selected;
-        if (MenuPopup->Action)
-          MenuPopup->Action ((_Container *) MenuPopup);
+        if (MenuPopup->Selected >= 0)
+          if (MenuPopup->Action)
+            MenuPopup->Action ((_Container *) MenuPopup);
         MenuPopup->SelectionList->Die ();
         MenuPopup->SelectionList = NULL;
       }
@@ -3497,6 +3615,11 @@ bool _MenuPopup::ProcessEventCustom (_Event *Event, _Point Offset)
         if (Event->Type == etMouseDown && Event->Key == KeyMouseRight)   // Activate
           {
             Mouse = {Event->X - Offset.x, Event->Y - Offset.y};
+            if (Font)
+              {
+                FontForm = Form->Container->Font;   // Impose Font
+                Form->Container->Font = Font;
+              }
             SelectionList = new _SelectionList (Form->Container, {Event->X, Event->Y, 0, 0}, Text, (_Action) ActionMenuPopupSelectionList);
             SelectionList->DataContainer = this;   // remember where we came from
             Res = true;
@@ -3517,8 +3640,9 @@ void ActionDropListSelectionList (_SelectionList *SelectionList)
     if (DropList->SelectionList)
       {
         DropList->Selected = SelectionList->Selected;
-        if (DropList->Action)
-          DropList->Action ((_Container *) DropList);
+        if (DropList->Selected >= 0)
+          if (DropList->Action)
+            DropList->Action ((_Container *) DropList);
         DropList->SelectionList->Die ();
         DropList->SelectionList = NULL;
         DropList->Invalidate (true);
@@ -3739,7 +3863,7 @@ void _ButtonAction (_Container *Container)
     //
     Button = (_Button *) Container;
     if (Button)
-      if (Button->Down)
+      //if (Button->Down)
         {
           s = Button->TextGet ();
           if (s && s [0])

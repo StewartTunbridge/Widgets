@@ -962,7 +962,7 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLin
         return -1;
       }
     //MessageBox (NULL, "AAAHHHHHH!!!!!!", "Windows Sucks", MB_OK);
-    res = main_ (0, nullptr);
+    res = main_ (__argc, __argv); //(0, nullptr);
     DebugAdd ("Widgets - Exit");
     return res;
   }

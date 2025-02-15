@@ -421,6 +421,36 @@ int UTF8Prev (char *St, int Index)
     return a;
   }
 
+// 000uvvvvwwwwxxxxyyyyzzzz
+// ---kjihgfedcba9876543210
+//                  -------  => 0yyyzzzz
+//              -----------  => 110xxxyy 10yyzzzz
+//         ----------------  => 1110wwww 10xxxxyy 10yyzzzz
+//    ---------------------  => 11110uvv 10vvwwww 10xxxxyy 10yyzzzz
+
+void UTF8FromInt (char **Dest, int Unicode)
+  {
+    if (Unicode < 0x80)
+      *(*Dest)++ = Unicode;
+    else
+      {
+        if (Unicode < 0x800)
+          *(*Dest)++ = 0xC0 | ((Unicode >> 6) & 0x1F);
+        else
+          {
+            if (Unicode < 0x10000)
+              *(*Dest)++ = 0xE0 | ((Unicode >> 12) & 0x0F);
+            else
+              {
+                *(*Dest)++ = 0xF0 | ((Unicode >> 18) & 0x07);
+                *(*Dest)++ = 0x80 | ((Unicode >> 12) & 0x3F);
+              }
+            *(*Dest)++ = 0x80 | ((Unicode >> 6) & 0x3F);
+          }
+        *(*Dest)++ = 0x80 | (Unicode & 0x3F);
+      }
+  }
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -518,6 +548,21 @@ char *StrPosLast (char *St, const char Target)
     return Res;
   }
 
+char *StrPosLast (char *St, const char *Target)  // Search for last occurence of Target
+  {
+    char *p, *Res;
+    //
+    p = St - 1;
+    Res = NULL;
+    while (true)
+      {
+        p = StrPos (p + 1, Target);
+        if (p == NULL)
+          return Res;
+        Res = p;
+      }
+  }
+
 int StrCmp (const char *s1, const char *s2)
   {
     // Are both undefined
@@ -582,6 +627,18 @@ char *StrGetItem (char **Pos, char Separator)   // Get a substring, delimited by
     if (**Pos)
       (*Pos)++;
     return Res;
+  }
+
+bool StrMatch (char **St, char *Target)
+  {
+    char *s;
+    //
+    s = *St;
+    while (*Target)
+      if (*s++ != *Target++)
+        return false;
+    *St = s;
+    return true;
   }
 
 // Conversion to numbers
@@ -852,15 +909,12 @@ void NumToHex (char **Dest, unsigned long int n, word Digits)
     NumToStrBase (Dest, n, Digits, 16);
   }
 
-void NumToStrDecimals (char **Dest, unsigned long int n, int Decimals, word Digits)
+void IntToStrDecimals (char **Dest, long int n, int Decimals, word Digits)
   {
     int m;
     int i;
     //
     if (*Dest)
-//      if (n == StrError)
-//        StrCat (Dest, '#', Decimals + 2);
-//      else
         {
           if (n < 0)
             {
@@ -883,12 +937,9 @@ void FloatToStr (char **Dest, float Value, int Places, word Digits)
   {
     int i;
     //
-    if (Value < 0)
-      StrCat (Dest, '-');
-    Value = Abs (Value);
     for (i = 0; i < Places; i++)
       Value *= 10.0;
-    NumToStrDecimals (Dest, (unsigned long int) Value, Places, Digits);
+    IntToStrDecimals (Dest, (long int) Value, Places, Digits);
  }
 
 void StrAddDateTime (char **Dest)
@@ -1060,13 +1111,29 @@ void StrInsert (char *Dest, char Ch)
         }
   }
 
+void StrInsert (char *Dest, char *St)
+  {
+    while (*St)
+      StrInsert (Dest++, *St++);
+  }
+
 void StrDelete (char *Ch)
   {
     if (Ch)
       while (*Ch)
         {
           Ch [0] = Ch [1];
-          +Ch++;
+          Ch++;
+        }
+  }
+
+void StrDelete (char *Ch, int n)
+  {
+    if (Ch)
+      while (*Ch)
+        {
+          Ch [0] = Ch [n];
+          Ch++;
         }
   }
 
@@ -1125,6 +1192,18 @@ void StrForceExtension (char *Filename, char *Extension)
     if (p)   // no extension
       *p = 0;
     StrAddExtension (Filename, Extension);
+  }
+
+bool StrExtractPath (char *Filepath, char ** Path)
+  {
+    char *p = StrPosLast (Filepath, PathDelimiter);
+    if (p == NULL)
+      return false;
+    *p = 0;
+    *Path = NULL;
+    StrAssignCopy (Path, Filepath);
+    *p = PathDelimiter;
+    return true;
   }
 
 
@@ -1831,6 +1910,7 @@ bool GetCurrentPath (char **Path)   // Caller must free Result
   {
     char *p1;
     //
+    *Path = NULL;
     if (chdir (".") == 0)   // Try to be in a valid place (####)
       {
         p1 = (char *) malloc (MaxPath + 1);

@@ -90,7 +90,7 @@ typedef struct
     _WindowID WindowID;
     int Key;   // Key code, Mouse button number ...
     int X, Y;   // Coordinates (Mouse)
-    word MouseKeys;   // State of all Mouse Keys: Use Keys & Bit [KeyMouse* - 1]
+    word MouseKeys;   // State of all Mouse Keys: Use MouseKeys & Bit [KeyMouse* - 1]
     int ShiftState;   // State of Keyboard Shift Keys. See Key*
   } _Event;
 

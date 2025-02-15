@@ -85,8 +85,7 @@ typedef bool (*_FormEventPreview) (_Form *Form, _Event *Event);
 class _Form //: public _List
   {
     private:
-      //_Rect Cursor;
-      //int CursorTick;
+      byte WindowAttributes;
       void CreateContainer (char *Title);
     public:
       _Form *Next, *Prev;   // Next _Form in the list (see FormList)
@@ -94,19 +93,17 @@ class _Form //: public _List
       _Container *Container;
       _Container *KeyFocus;
       _Container *EventLock;
-      //_Event Event;   // Last Event this form
       _Texture *WindowTexture;
       bool ReRender;
       char KeyPress;   // Keyboard input from soft keyboards (0 = none)
       byte Alpha;
-      byte WindowAttributes;
       _FormEventPreview EventPreview;
       bool DieFlag;
-      _Form (char *Title, _Rect Position, byte WindowAttribute = 0);   // Create Form
-      virtual ~_Form (void);   // Manually remove Form (happens on window close)
       void Clear (void);
       bool SaveScreenShot (char *Filename);
       void Die (void);
+      _Form (char *Title, _Rect Position, byte WindowAttribute = 0);   // Create Form
+      virtual ~_Form (void);   // Manually remove Form (happens on window close)
   };
 
 // Look for events, processes everything, draw & render whats needed, deletes closing windows, returns true when last is gone
@@ -148,6 +145,7 @@ class _Container
     protected:
       byte RenderFlags;   // ####See bRender*
       char *Text;   // ####Used by descendants for ...
+      _Point Shift, Clip;   // for transitions
     private:
       bool Visible;   // True if this (and children) are displayed
       bool Enabled;   // True if events are allowed here and within
@@ -155,10 +153,8 @@ class _Container
       int PagingTick;
       enum {ptsIdle, ptsBlending} PagingTransitionState;
       void TextOutWrap_ (_Rect Rect, char *Text, _Align Align, int *PosY, bool Write);   // TextOut multiline wordwrapped. '\n'=NewLine '\t'=Split
-    protected:
-      _Point Shift, Clip;   // for transitions
-      _Font *Font;
     public:
+      _Font *Font;
       _Texture* Texture;
       byte Alpha;
       _Point TextMeasure (_Font *Font, char *Text);
@@ -194,9 +190,8 @@ class _Container
       bool IsEnabled (void);
       void EnabledSet (bool Enabled_);
       //
-      bool FontSet (char *FontFile, int Size, byte Style = 0x00);
+      bool FontSet (const char *FontFile, int Size, byte Style = 0x00);
       //
-    //protected:
       int ColourFind (void);
       int ColourTextFind (void);
       _Font* FontFind (void);
@@ -232,15 +227,16 @@ class _Container
       //
       //_EventPreview EventPreview;
       void Draw (bool Force, _Point Offset);
-      virtual void DrawCustom (void);   // Implemented by descendants
       void Render1 (bool RenderAll, int DestX, int DestY, byte AlphaOffset);
       void Render2 (int DestX, int DestY);
       void Die (void);
       //
       bool CheckFocus (_Event *Event, _Point Offset);
       bool ProcessEvent (_Event *Event, _Point Offset);   // returns true when actioned
-      virtual bool ProcessEventCustom (_Event *Event, _Point Offset);   // Implemented by descendants
       void Poll (void);
+    protected:
+      virtual void DrawCustom (void);   // Implemented by descendants
+      virtual bool ProcessEventCustom (_Event *Event, _Point Offset);   // Implemented by descendants
       virtual void PollCustom (void);
   };
 
@@ -315,12 +311,14 @@ class _Label: public _Container
 
 class _LabelNumber: public _Container
   {
+    protected:
+      int Value;
+      virtual void DrawCustom (void);
     public:
       _Border Border;
-      int Value;
-      //
+      int ValueGet (void);
+      void ValueSet (int Val);
       _LabelNumber (_Container *Parent, _Rect Rect, char *Text_ = NULL, _Border Border_ = bNone);
-      virtual void DrawCustom (void);
   };
 
 class _LabelMoney: public _Container
@@ -395,31 +393,36 @@ class _Slider: public _Container
   {
     protected:
       bool Vertical;
+      int Value;
       int ValueMin, ValueMax;
       _Action Action;
       bool MouseDown;
       virtual bool ProcessEventCustom (_Event *Event, _Point Offset);
     public:
       int ColourKnob;
+      int Sections;
       _Slider (_Container *Parent, _Rect Rect, int Min, int Max, _Action Action = NULL);
+      int ValueGet (void);
+      void ValueSet (int Value);
       virtual void DrawCustom (void);
-      int Value;
   };
 
 class _Knob: public _Container
   {
     protected:
       _Border Border;
+      int Value;
       int ValueMin, ValueMax;
       _Action Action;
       int MouseX, MouseY;
       int MouseValue;
+      virtual void DrawCustom (void);
       virtual bool ProcessEventCustom (_Event *Event, _Point Offset);
     public:
       int Markers;
+      int ValueGet (void);
+      void ValueSet (int Val);
       _Knob (_Container *Parent, _Rect Rect, char *Text, int Min, int Max, _Border Border = bNone, _Action Action = nullptr);
-      virtual void DrawCustom (void);
-      int Value;
   };
 
 class _Wait: public _Container
@@ -454,8 +457,11 @@ class _SelectionList: public _Container
     protected:
       _Point ItemSize;
       int Hovering;
+      int ListOffset;   // scroll long lists
     public:
       char *List;
+      int ListSize;
+      int ListDisplayed;
       _Align Align;
       int Selected;
       _Action Action;  // Callback function when Value changes
@@ -489,6 +495,7 @@ class _MenuPopup : public _Container
       int Selected;
       _Action Action;
       _Point Mouse;
+      _Font *FontForm;   // Fudge fix later
       _SelectionList *SelectionList;
       _MenuPopup (_Container *Parent, _Rect Rect_, char *Text_, _Action Action_);
     protected:

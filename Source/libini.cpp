@@ -10,6 +10,7 @@
 #include "libini.hpp"
 #include "lib.hpp"
 
+extern void DebugAdd (const char *St);   // defined in application
 
 _Collection::_Collection (void)
   {
@@ -195,14 +196,17 @@ bool _Strings::WriteToFile (char *Filename)
 //
 // INI FILE CLASS
 
-_INI::_INI (char *Filename) : _Strings ()
+_INI::_INI (char *Filenam) : _Strings ()
   {
+    Filename = NULL;
+    StrAssignCopy (&Filename, Filenam);
     ReadFromFile (Filename);
   }
 
 _INI::~_INI (void)
   {
-    //####
+    WriteToFile (Filename);
+    free (Filename);
     //write if changed
   }
 
@@ -259,7 +263,7 @@ char *_INI::KeyFind (char *Key, int *Index)
       }
   }
 
-char *_INI::Read (char *Key)   // Returns a pointer to data inside _INI (do not free)
+char *_INI::Read (char *Key, char *ValueDefault)   // Returns a pointer to data inside _INI (do not free)
   {
     return KeyFind (Key, NULL);
   }

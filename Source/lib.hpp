@@ -85,6 +85,7 @@ extern char UpCase (char c);
 extern int UTF8Read (char ** Ch);
 extern int UTF8Next (char *St, int Index);
 extern int UTF8Prev (char *St, int Index);
+extern void UTF8FromInt (char **Dest, int Unicode);
 
 extern int StrLen (const char *St);
 
@@ -100,6 +101,7 @@ extern void StrAssignCopy (char **Dest, const char *Source);
 extern char *StrPos (char *St, const char *Target);     // Search for string
 extern char *StrPos (char *St, const char Target);      // Search for char
 extern char *StrPosLast (char *St, const char Target);  // Search for last occurence of Target
+extern char *StrPosLast (char *St, const char *Target);  // Search for last occurence of Target
 
 extern int StrCmp (const char *s1, const char *s2);   // Compare: 0 => s1 = s2  -ve => s1 < s2  +ve => s1 > s2
 extern bool StrSame (const char *S1, const char *S2);
@@ -108,6 +110,7 @@ extern void StepSpace (char **Pos);
 
 // Fields
 extern char *StrGetItem (char **String, const char Separator);   // Caller must free result
+extern bool StrMatch (char **St, char *Target);   // Does St start with Target? If so, move St past it
 
 // Conversion to numbers
 extern bool StrError;
@@ -130,7 +133,7 @@ extern void NumToStr (char **Dest, unsigned long int n);
 extern void IntToStr (char **Dest, long int n);
 extern void IntToStr (char **Dest, long int n, int Digits);
 extern void NumToHex (char **Dest, unsigned long int n, word Digits = 0);
-extern void NumToStrDecimals (char **Dest, unsigned long int n, int Decimals, word Digits = 0);
+extern void IntToStrDecimals (char **Dest, long int n, int Decimals, word Digits = 0);
 extern void FloatToStr (char **Dest, float Value, int Places, word Digits = 0);
 extern void StrAddDateTime (char **St);
 extern void StrFormatDateTime (char **St, tm *DateTime, char *Format);   // Format date time as per Format %{0-9}[ymdhns]
@@ -149,7 +152,9 @@ extern void StrCat (char **Dest, const char Ch);   // Append Char
 extern void StrCat (char **Dest, const char Ch, int n);   // Append Char repeated
 extern void StrCat (char **Dest, const char *St, int n);   // Append String length limited
 extern void StrInsert (char *Dest, char Ch);
+extern void StrInsert (char *Dest, char *St);
 extern void StrDelete (char *Ch);
+extern void StrDelete (char *Ch, int n);
 extern void StrAppend (char *Dest, char Ch);
 extern void StrAppend (char *Dest, char *St);
 
@@ -157,6 +162,7 @@ extern void StrAppend (char *Dest, char *St);
 extern char *StrFindFileExtension (char *FileName);
 extern void StrAddExtension (char *Filename, char *Extension);
 extern void StrForceExtension (char *Filename, char *Extension);
+extern bool StrExtractPath (char *Filepath, char ** Path);
 
 
 ///////////////////////////////////////////////////////////////////////////////
