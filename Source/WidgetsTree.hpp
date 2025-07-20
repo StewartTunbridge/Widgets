@@ -4,16 +4,11 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-/*
-#define toGridLines    0x01
-#define toSelectMulti  0x02
-#define toSelectLine   0x04
-#define toAdjustColumn 0x08
-*/
+
+#include "WidgetsEdit.hpp"
 
 class _TreeViewNode
   {
-    //private:
     public:
       _TreeViewNode *Next, *Prev;
       _TreeViewNode *Parent;
@@ -25,39 +20,36 @@ class _TreeViewNode
       _TreeViewNode (char *Text, void *Data = NULL);
       ~_TreeViewNode ();
       //
-      _TreeViewNode *AddNode (bool Child, char *Text, void *Data = NULL);
-      _TreeViewNode* NodeNext (int *x);
+      _TreeViewNode *NodeAdd (bool Child, char *Text, void *Data = NULL);
+      _TreeViewNode *NodeNext (int *x);
+      _TreeViewNode *NodeFind (char *Txt);
       int Depth (void);
   };
 
 class _TreeView;
 
-//typedef void (*_ActionCellDraw) (_Grid *Grid, int x, int y, _Rect Rect);
-//typedef char* (*_ActionCellRead) (_Grid *Grid, int x, int y);   // Result will be freed by Grid
-//typedef void (*_ActionCellWrite) (_Grid *Grid, int x, int y, char *Data);
+typedef void (*_ActionNodeEditWrite) (_TreeView *TreeView, char *Text, bool Abort);   // Here's your modified data. Abort on esc
 
 class _TreeView: public _Container
   {
     protected:
+      _Edit *Edit;   // Used for editing a Cell
       virtual void DrawCustom (void);
       virtual bool ProcessEventCustom (_Event *Event, _Point Offset);   // returns true when actioned
     public:
       byte Options;
       int NodeHeight;
+      int Indent;
       _TreeViewNode *Nodes;
       _TreeViewNode *Selected;
-      //int Top;
       _Action Action;
-      _TreeView (_Container *Parent, _Rect Rect_);
-      ~_TreeView ();
-      void SetSize (void);
+      _ActionNodeEditWrite ActionNodeEditWrite;
+      _TreeView (_Container *Parent, _Rect Rect_, _Action Action_ = NULL);
+     ~_TreeView ();
+      void SetSize (int Width, int Height);
+      _Point ScrollToSelected (void);   // adjust Scroll to show Selected Node
       void Check (void);
-      int FindNode (_TreeViewNode *Target);
+      int NodeFind (_TreeViewNode *Target);
+      void NodeEdit (void);   // Create an edit box for Node->Name. Result via _ActionNodeEditWrite
       _TreeViewNode* FindItem (int Target);
-      int NodesDisplayable (void);
-      //int DrawFrom;
-      //_ActionCellDraw ActionCellDraw;   // Draws the specific cell contents
-      //_ActionCellRead ActionCellRead;   // Define to allow Cell Editing
-      //_ActionCellWrite ActionCellWrite;   // After Editing, returns the edited result
   };
-

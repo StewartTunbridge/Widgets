@@ -12,6 +12,8 @@
 // -------
 // Remove references to SDL (done not tested)
 //
+// Added UTF8 and UTF16 support
+//
 ///////////////////////////////////////////////////////////////////////////////
 
 
@@ -24,11 +26,14 @@
 #ifdef _Windows
   #include <io.h>
   #include <sysinfoapi.h>
+  #include <sys/utime.h>
 #else
   #include <unistd.h>
   #include <linux/rtc.h>
   #include <sys/time.h>
+  #include <utime.h>
   #include <errno.h>
+  #include <sys/statvfs.h>
 #endif
 #include <sys/stat.h>
 #include <dirent.h>
@@ -43,6 +48,9 @@ const unsigned int Bit [32] =
 
 const char *BoolText [2] = {"False", "True"};
 
+extern void DebugAddInt (const char *St, int n);
+extern void DebugAddS (const char *S1, const char *s2);
+
 /*
 #ifdef _Windows
   char PathChar = '\\';
@@ -56,27 +64,75 @@ const char *BoolText [2] = {"False", "True"};
 //
 // COLOUR
 
+// COLOUR CONSTANTS
+
+int cBlack = 0x000000;
+int cWhite = 0xFFFFFF;
+int cRed = 0x0000FF;
+int cGreen = 0x00FF00;
+int cBlue = 0xFF0000;
+
+int cRedLight   =  0xC0C0FF;
+int cGreenLight =  0xD0FFD0;
+int cBlueLight  =  0xFFD0D0;
+
+int cRedDark   =  0x000080;
+int cGreenDark =  0x006000;
+int cBlueDark =  0xA00000;
+
+int cAqua = (cGreen | cBlue);
+int cAquaLight =  cGreenLight | cBlueLight;
+int cAquaDark =  cGreenDark | cBlueDark;
+
+int cGray = 0xD0D0D0;
+int cGrayDark = 0x808080;
+
+int cPurple = 0xFF00FF;
+int cPurpleLight = 0xFFD0FF;
+
+int cOrange = 0x00A0FF;
+int cYellow = 0x00FFFF;
+int cPink = 0x8080FF;
+int cBrown = 0x005190;
+int cMaroon = 0x000080;
+
+int AlphaBlend (int Colour1, int Colour2, int Alpha)
+  {
+    _Colour c1, c2;
+    //
+    c1.RGBA = Colour1;
+    c2.RGBA = Colour2;
+    c1.Prime [0] = (int) c1.Prime [0] * Alpha / 0xFF + c2.Prime [0] * (0xFF - Alpha) / 0xFF;
+    c1.Prime [1] = (int) c1.Prime [1] * Alpha / 0xFF + c2.Prime [1] * (0xFF - Alpha) / 0xFF;
+    c1.Prime [2] = (int) c1.Prime [2] * Alpha / 0xFF + c2.Prime [2] * (0xFF - Alpha) / 0xFF;
+    return c1.RGBA;
+  }
+
+
+
 int ColourAverage (int Colour1, int Colour2)
   {
-    int Res, Mask;
-    //
-    Res = 0;
-    Mask = 0xFF0000;
-    while (Mask)
-      {
-        Res |= (((Colour1 & Mask) + (Colour2 & Mask)) / 2) & Mask;
-        Mask >>= 8;
-      }
-    return Res;
+    return AlphaBlend (Colour1, Colour2, 0x80);
   }
 
 int RGBToColour (byte r, byte g, byte b)
   {
+    /*
+    int Colour;
+    byte *RGB = ((byte *) &Colour);
+    RGB [0] = r;
+    RGB [1] = g;
+    RGB [2] = b;
+    return Colour;*/
     return ((int) b << 16) | ((int) g << 8) | ((int) r);
   }
 
 void ColourToRGB (int Colour, byte *R, byte *G, byte *B)
   {
+    /* byte *RGB = ((byte *) &Colour);
+    *R = RGB [0];
+    *G = RGB [1];
+    *B = RGB [2]; */
     *R = Colour;
     *G = Colour >> 8;
     *B = Colour >> 16;
@@ -85,41 +141,16 @@ void ColourToRGB (int Colour, byte *R, byte *G, byte *B)
 // Adjust Colour up/down: Pcnt 100=unchanged, 0=Black, 200=White
 int ColourAdjust (int Colour, int Pcnt)
   {
-    unsigned int Mask;
-    unsigned int c;
-    //
     if (Pcnt == 100)
       return Colour;
-    if (Pcnt <= 0)
-      return cBlack;
-    if (Pcnt >= 200)
-      return cWhite;
-    Mask = 0xFF0000;
-    while (Mask)
-      {
-        c = Colour & Mask;
-        if (Pcnt <= 100)
-          c = c * Pcnt / 100;
-        else
-          c = Mask - ((Mask - c) * (200 - Pcnt) / 100);
-        Colour = (Colour & ~Mask) | (Min (c, Mask) & Mask);
-        Mask = Mask >> 8;
-      }
-    return Colour;
-  }
-
-byte Grad (byte Col1, byte Col2, int GradNum, int GradDen)
-  {
-    int x = Col1 + ((Col2 - Col1) * GradNum + GradDen / 2) / GradDen;
-    return x;
+    if (Pcnt < 100)
+      return AlphaBlend (Colour, cBlack, Pcnt * 0xFF / 100);
+    return AlphaBlend (cWhite, Colour, (Pcnt - 100) * 0xFF / 100);
   }
 
 int ColourGraded (int Colour1, int Colour2, int GradNum, int GradDen)
   {
-    byte r = Grad (ColourR (Colour1), ColourR (Colour2), GradNum, GradDen);
-    byte g = Grad (ColourG (Colour1), ColourG (Colour2), GradNum, GradDen);
-    byte b = Grad (ColourB (Colour1), ColourB (Colour2), GradNum, GradDen);
-    return RGBToColour (r, g, b);
+    return AlphaBlend (Colour2, Colour1, GradNum * 0xFF / GradDen);
   }
 
 
@@ -231,7 +262,7 @@ void _List::Remove (_List **Start)
 // Initialize Array to NULL
 // This really annoys Paul until I make it a c++ class
 
-int ArrayGet (int **Array, int Index, int Default)
+int ArrayGetInt (int **Array, int Index, int Default)
   {
     if (*Array == NULL || Index >= **Array)
       return Default;
@@ -240,7 +271,7 @@ int ArrayGet (int **Array, int Index, int Default)
     return (*Array) [Index + 1];
   }
 
-void ArraySet (int **Array, int Index, int Value)
+void ArraySetInt (int **Array, int Index, int Value)
   {
     int *ArrayNew;
     int i;
@@ -260,6 +291,46 @@ void ArraySet (int **Array, int Index, int Value)
         *Array [0] = Index + 1;
       }
     (*Array) [Index + 1] = Value;
+  }
+
+bool ArrayGetBool (bool **Array, int Index, bool Default)
+  {
+    int Size;
+    //
+    Size = 0;
+    if (*Array)
+      Size = *((int *) *Array);
+    if (Index >= Size)
+      return Default;
+    if ((byte) ((*Array) [Index + 1]) == 0xFF)
+      return Default;
+    return (*Array) [Index + sizeof (int)];
+  }
+
+void ArraySetBool (bool **Array, int Index, bool Value)
+  {
+    bool *ArrayNew;
+    int Size, SizeNew;
+    //
+    Size = 0;
+    if (*Array)
+      Size = *((int *) *Array);
+    if (Index >= Size)
+      {
+        SizeNew = 1;
+        while (SizeNew <= Index)
+          SizeNew = SizeNew << 1;
+        ArrayNew = (bool *) malloc (SizeNew * sizeof (bool) + sizeof (int));
+        memset (ArrayNew, 0xFF, SizeNew * sizeof (bool) + sizeof (int));
+        if (Size)   // Copy old array to new (larger) array
+          {
+            memmove (ArrayNew, *Array, Size * sizeof (bool) + sizeof (int));
+            free (*Array);
+          }
+        *((int *) ArrayNew) = SizeNew;
+        *Array = ArrayNew;
+      }
+    (*Array) [Index + sizeof (int)] = Value;
   }
 
 // Now, as a class
@@ -348,8 +419,15 @@ bool IsAlpha (char c)
 
 char UpCase (char c)
   {
-    if (IsAlpha (c))
-      c &= ~('A' ^ 'a');
+    if (IsLower (c))
+      c ^= ('A' ^ 'a');
+    return c;
+  }
+
+char LoCase (char c)
+  {
+    if (IsUpper (c))
+      c ^= ('A' ^ 'a');
     return c;
   }
 
@@ -428,27 +506,54 @@ int UTF8Prev (char *St, int Index)
 //         ----------------  => 1110wwww 10xxxxyy 10yyzzzz
 //    ---------------------  => 11110uvv 10vvwwww 10xxxxyy 10yyzzzz
 
-void UTF8FromInt (char **Dest, int Unicode)
+int UTF32ToStr (char **Dest, int Unicode)
   {
+    int l;
+    //
+    l = 0;
     if (Unicode < 0x80)
-      *(*Dest)++ = Unicode;
+      l += StrCat (Dest, (char) Unicode);
     else
       {
         if (Unicode < 0x800)
-          *(*Dest)++ = 0xC0 | ((Unicode >> 6) & 0x1F);
+          l += StrCat (Dest, 0xC0 | ((Unicode >> 6) & 0x1F));
         else
           {
             if (Unicode < 0x10000)
-              *(*Dest)++ = 0xE0 | ((Unicode >> 12) & 0x0F);
+              l += StrCat (Dest, 0xE0 | ((Unicode >> 12) & 0x0F));
             else
               {
-                *(*Dest)++ = 0xF0 | ((Unicode >> 18) & 0x07);
-                *(*Dest)++ = 0x80 | ((Unicode >> 12) & 0x3F);
+                l += StrCat (Dest, 0xF0 | ((Unicode >> 18) & 0x07));
+                l += StrCat (Dest, 0x80 | ((Unicode >> 12) & 0x3F));
               }
-            *(*Dest)++ = 0x80 | ((Unicode >> 6) & 0x3F);
+            l += StrCat (Dest, 0x80 | ((Unicode >> 6) & 0x3F));
           }
-        *(*Dest)++ = 0x80 | (Unicode & 0x3F);
+        l += StrCat (Dest, 0x80 | (Unicode & 0x3F));
       }
+    return l;
+  }
+
+// Encoding to UTF16
+// 00000000bbbbccccddddeeee unchanged
+// 0000aaaabbbbccccddddeeee => 110110aaaabbbbcc 110111ccddddeeee
+
+int UTF16Read (word **UTF16)   // Reads a UTF16 character from a UTF16 string.
+  {
+    int c1, c2;
+    //
+    c1 = **UTF16;
+    if (c1 == 0)
+      return 0;
+    (*UTF16)++;
+    if ((c1 & 0xFC00) != 0xD800)   // not the special case, no need the 2nd word
+      return c1;
+    c2 = **UTF16;
+    if (c2 == 0)
+      return -1;
+    (*UTF16)++;
+    if ((c2 & 0xFC00) != 0xDC00)   // not the special case 2nd word so error
+      return -1;
+    return ((c1 & 0x3FF) << 10) | (c2 & 0x3FF);
   }
 
 
@@ -496,16 +601,18 @@ int StrLen (const char *St)
     return 0;
   }
 
-char *StrPos (char *St, const char *Target)
+char *StrPos (char *St, const char *Target, int TargetLen)
   {
     int b;
     //
     if (St == NULL)
       return NULL;
+    if (Target == NULL)
+      return St;
     b = 0;
     while (true)
       {
-        if (Target [b] == 0)   // Found
+        if ((TargetLen > 0 && b >= TargetLen) || Target [b] == 0)   // Found
           return St;
         if (*St == 0)   // Not found
           return NULL;
@@ -563,7 +670,27 @@ char *StrPosLast (char *St, const char *Target)  // Search for last occurence of
       }
   }
 
-int StrCmp (const char *s1, const char *s2)
+char *StrPosPrev (char *St, char *Pos, const char *Target, int TargetLen)
+  {
+    char *a, *b;
+    char *Res;
+    //
+    Res = NULL;
+    a = St;
+    while (true)
+      {
+        b = StrPos (a, Target, TargetLen);
+        if (b == NULL)
+          break;
+        if (b >= Pos)
+          break;
+        Res = b;
+        a = b + 1;
+      }
+    return Res;
+  }
+
+int StrCmp (const char *s1, const char *s2, int n)
   {
     // Are both undefined
     if ((s1 == NULL) && (s2 == NULL))
@@ -584,6 +711,9 @@ int StrCmp (const char *s1, const char *s2)
           return +1;
         s1++;
         s2++;
+        if (n)
+          if (--n == 0)
+            return 0;
       }
   }
 
@@ -597,7 +727,7 @@ bool StrSame (const char *S1, const char *S2)
 void StepSpace (char **Pos)
   {
     if (Pos)
-      while (**Pos == ' ') // ((**Pos == ' ') || (**Pos == '\t') || (**Pos == '\n') || (**Pos == '\r'))
+      while (**Pos == ' ' || **Pos == '\t' || **Pos == '\n' || **Pos == '\r')
         (*Pos)++;
   }
 
@@ -607,8 +737,8 @@ char *StrGetItem (char **Pos, char Separator)   // Get a substring, delimited by
     char *Res;
     //
     //StepSpace (Pos);
-    if (*Pos == 0)
-      return NULL;   // Error: No string
+    if (*Pos == 0 || **Pos == 0)
+      return NULL;   // No string OR End of String
     ItemStart = *Pos;
     while (true)
       {
@@ -616,17 +746,41 @@ char *StrGetItem (char **Pos, char Separator)   // Get a substring, delimited by
           break;
         (*Pos)++;
       }
-    Res = NULL;
-    if (*Pos != ItemStart)
-      {
-        Res = (char *) malloc (*Pos - ItemStart + 1);
-        memcpy (Res, ItemStart, *Pos - ItemStart);
-        Res [*Pos - ItemStart] = 0;
-      }
+    Res = (char *) malloc (*Pos - ItemStart + 1);
+    memcpy (Res, ItemStart, *Pos - ItemStart);
+    Res [*Pos - ItemStart] = 0;
     // Step past separator
     if (**Pos)
       (*Pos)++;
     return Res;
+  }
+
+char *StrNextTab (char *St)
+  {
+    char *a;
+    //
+    a = StrPos (St, '\t');
+    if (a)   // no more tabs so add one
+      return a + 1;
+    a = StrPos (St, '\0');
+    *a++ = '\t';
+    *a = 0;
+    return a;
+  }
+
+void StrSetItem (char *Items, int n, char *Item)   // Items is static. Must be long enough
+  {
+    char *p, *q;
+    //
+    p = Items;
+    while (n)
+      {
+        p = StrNextTab (p);
+        n--;
+      }
+    q = StrNextTab (p);
+    StrDelete (p, q - p - 1);
+    StrInsert (p, Item);
   }
 
 bool StrMatch (char **St, char *Target)
@@ -781,7 +935,7 @@ float StrGetReal (char **Pos)
     return (float) Int + (float) Frac / (float) FracDen;
   }
 
-int StrGetHexAscii (char **Pos, byte *Data, int MaxData)   // Returns data size. Sets StrError
+int StrGetHexAscii (char *Text, byte *Data, int MaxData)   // Returns data size. Sets StrError
   {
     bool Ascii;
     int Index;
@@ -790,184 +944,221 @@ int StrGetHexAscii (char **Pos, byte *Data, int MaxData)   // Returns data size.
     Index = 0;
     Ascii = false;
     StrError = false;
-    while (!StrError)
-      {
-        if (**Pos == 0)
-          {
-            if (Ascii)
-              StrError = true;   // forgot to close quotes
-            else
-              return Index;
-          }
-        else if (Ascii)
-          {
-            if (**Pos == '\"')   // Switch mode
-              Ascii = false;
-            else
-              {
-                if (Index >= MaxData)
-                  StrError = true;   // out of space for data
-                else
-                  Data [Index++] = **Pos;
-              }
-            (*Pos)++;
-          }
-        else
-          {
-            StepSpace (Pos);
-            if (**Pos)
-              if (**Pos == '\"')   // Switch mode
-                {
-                  Ascii = true;
-                  (*Pos)++;
-                }
+    if (Text)
+      while (true)
+        {
+          if ((*Text == 0) || StrError)
+            break;
+          if (Ascii)
+            {
+              if (*Text == '\"')   // Switch mode
+                Ascii = false;
               else
                 {
-                  x = StrGetHex (Pos);
-                  if (x >= 0x100)
-                    StrError = true;
-                  else if (Index >= MaxData)
-                    StrError = true;
-                  else
-                    Data [Index++] = x;
+                  if (Data && Index < MaxData)
+                    Data [Index] = *Text;
+                  Index++;
                 }
-          }
-      }
-    return 0;
+              Text++;
+            }
+          else
+            {
+              StepSpace (&Text);
+              if (*Text)
+                if (*Text == '\"')   // Switch mode
+                  {
+                    Ascii = true;
+                    Text++;
+                  }
+                else
+                  {
+                    x = StrGetHex (&Text);
+                    if (x >= 0x100)
+                      StrError = true;
+                    else if (Data && Index < MaxData)
+                      Data [Index] = x;
+                    Index++;
+                  }
+            }
+        }
+    if (Ascii)   // forgot to close quotes
+      StrError = true;
+    if (StrError)
+      return -1;
+    return Index;
   }
 
 // Conversion to String
 
-void NumToStrBase (char **Dest, unsigned long int n, word Digits, unsigned int Base)
+char IntToHexDigit (int n)
   {
+    if (n <= 9)
+      return '0' + n;
+    return 'A' + n - 10;
+  }
+
+int NumToStrBase (char **Dest, unsigned long int n, word Digits, unsigned int Base)
+  {
+    int Res;
     int i, j;
     char temp [32];
-    int x;
     //
-    if (*Dest)
+    Res = 0;
+    // Convert to decimal characters (in reverse order)
+    i = j = 0;
+    do
       {
-        // Convert to decimal characters (in reverse order)
-        i = j = 0;
-        do
-          {
-            x = (n % Base);
-            if (x < 10)
-              temp [i++] = x + '0';
-            else
-              temp [i++] = x - 10 + 'A';
-            j++;
-            n = n / Base;
-            if (Digits & DigitsCommas)
-              if (j % 3 == 0 && n)
-                temp [i++] =',';
+        temp [i++] = IntToHexDigit (n % Base);
+        j++;
+        n = n / Base;
+        if (Digits & DigitsCommas)
+          if (j % 3 == 0 && n)
+            temp [i++] =',';
 
-          }
-        while (n);
-        // Pad out requested spaces / zeros
-        while (j < (Digits & 0xFF))
-          {
-            if (Digits & DigitsZeros)
-              *(*Dest)++ = '0';
-            else
-              *(*Dest)++ = ' ';
-            j++;
-          }
-        // Add formatted number to result (in correct order)
-        while (i)
-          *(*Dest)++ = temp [--i];
       }
+    while (n);
+    // Pad out requested spaces / zeros
+    while (j < (Digits & 0xFF))
+      {
+        if (Digits & DigitsZeros)
+          Res += StrCat (Dest, '0');
+        else
+          Res += StrCat (Dest, ' ');
+        j++;
+      }
+    // Add formatted number to result (in correct order)
+    while (i)
+      Res += StrCat (Dest, temp [--i]);
+    return Res;
   }
 
-void NumToStr (char **Dest, unsigned long int n, word Digits)
+int NumToStr (char **Dest, unsigned long int n, word Digits)
   {
-    NumToStrBase (Dest, n, Digits, 10);
+    return NumToStrBase (Dest, n, Digits, 10);
   }
 
-void NumToStr (char **Dest, unsigned long int n)
+int NumToStr (char **Dest, unsigned long int n)
   {
-    NumToStrBase (Dest, n, 0, 10);
+    return NumToStrBase (Dest, n, 0, 10);
   }
 
-void IntToStr (char **Dest, long int n, int Digits)
+int IntToStr (char **Dest, long int n, int Digits)
   {
     if (n < 0)
       {
         StrCat (Dest, '-');
-        NumToStr (Dest, (unsigned int) -n, Digits);
+        return NumToStr (Dest, (unsigned int) -n, Digits) + 1;
       }
-    else
-      NumToStr (Dest, n, Digits);
+    return NumToStr (Dest, n, Digits);
   }
 
-void IntToStr (char **Dest, long int n)
+int IntToStr (char **Dest, long int n)
   {
-    IntToStr (Dest, n, 0);
+    return IntToStr (Dest, n, 0);
   }
 
-void NumToHex (char **Dest, unsigned long int n, word Digits)
+int NumToHex (char **Dest, unsigned long int n, word Digits)
   {
-    NumToStrBase (Dest, n, Digits, 16);
+    return NumToStrBase (Dest, n, Digits, 16);
   }
 
-void IntToStrDecimals (char **Dest, long int n, int Decimals, word Digits)
+int IntToStrDecimals (char **Dest, long int n, int Decimals, word Digits)
   {
+    int Res;
     int m;
     int i;
     //
-    if (*Dest)
-        {
-          if (n < 0)
-            {
-              *(*Dest)++ = '-';
-              n = -n;
-            }
-          m = 1;
-          for (i = 0; i < Decimals; i++)
-            m = m * 10;
-          NumToStr (Dest, n / m, Digits);
-          if (Decimals)
-            {
-              *(*Dest)++ = '.';
-              NumToStr (Dest, n % m, Decimals | DigitsZeros);
-            }
-        }
+    Res = 0;
+    if (n < 0)
+      {
+        if (Dest && *Dest)
+          *(*Dest)++ = '-';
+        Res++;
+        n = -n;
+      }
+    m = 1;
+    for (i = 0; i < Decimals; i++)
+      m = m * 10;
+    Res += NumToStr (Dest, n / m, Digits);
+    if (Decimals)
+      {
+        Res += StrCat (Dest, '.');
+        Res += NumToStr (Dest, n % m, Decimals | DigitsZeros);
+      }
+    return Res;
   }
 
-void FloatToStr (char **Dest, float Value, int Places, word Digits)
+int FloatToStr (char **Dest, float Value, int Places, word Digits)
   {
     int i;
     //
     for (i = 0; i < Places; i++)
       Value *= 10.0;
-    IntToStrDecimals (Dest, (long int) Value, Places, Digits);
+    return IntToStrDecimals (Dest, (long int) Value, Places, Digits);
  }
 
-void StrAddDateTime (char **Dest)
+int StrAddDateTime (char **Dest, tm *DateTime)
+  {
+    int Res;
+    //
+    Res = 0;
+    Res += NumToStr (Dest, DateTime->tm_year + 1900, 4 | DigitsZeros);
+    Res += StrCat (Dest, '/');
+    Res += NumToStr (Dest, DateTime->tm_mon, 2 | DigitsZeros);
+    Res += StrCat (Dest, '/');
+    Res += NumToStr (Dest, DateTime->tm_mday, 2 | DigitsZeros);
+    Res += StrCat (Dest, ' ');
+    Res += NumToStr (Dest, DateTime->tm_hour, 2 | DigitsZeros);
+    Res += NumToStr (Dest, DateTime->tm_min, 2 | DigitsZeros);
+    Res += StrCat (Dest, ':');
+    Res += NumToStr (Dest, DateTime->tm_sec, 2 | DigitsZeros);
+    return Res;
+  }
+
+int StrAddCurrentDateTime (char **Dest)
   {
     tm DateTime;
     //
     GetDateTime (&DateTime);
-    NumToStr (Dest, DateTime.tm_year + 1900, 4 | DigitsZeros);
-    *(*Dest)++ = '/';
-    NumToStr (Dest, DateTime.tm_mon, 2 | DigitsZeros);
-    *(*Dest)++ = '/';
-    NumToStr (Dest, DateTime.tm_mday, 2 | DigitsZeros);
-    *(*Dest)++ = ' ';
-    NumToStr (Dest, DateTime.tm_hour, 2 | DigitsZeros);
-    NumToStr (Dest, DateTime.tm_min, 2 | DigitsZeros);
-    *(*Dest)++ = ':';
-    NumToStr (Dest, DateTime.tm_sec, 2 | DigitsZeros);
+    return StrAddDateTime (Dest, &DateTime);
+  }
+
+bool StrGetDateTime (char **St, tm *DateTime)
+  {
+    int hhmm;
+    //
+    DateTime->tm_year = StrGetNum (St);
+    if (DateTime->tm_year > 1900) //%%%%
+      if (StrMatch (St, "/"))
+        {
+          DateTime->tm_year -= 1900;
+          DateTime->tm_mon = StrGetNum (St);
+          if (StrMatch (St, "/"))
+            {
+              DateTime->tm_mday = StrGetNum (St);
+              hhmm = StrGetNum (St);
+              DateTime->tm_hour = hhmm / 100;
+              DateTime->tm_min = hhmm % 100;
+              if (StrMatch (St, ":"))   // seconds is optional
+                DateTime->tm_sec = StrGetNum (St);
+              if (**St == 0)   // date string is ok
+                return true;
+            }
+        }
+    return false;
   }
 
 const char *MonthName [] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 // Format date time as per Format
-// eg "Some Text %d2/%m2/%y4  %h2:%m2:%s2"
-void StrFormatDateTime (char **St, tm *DateTime, char *Format)
+// eg "Some Text %d2/%m2/%y4  %h2:%n2:%s2"
+int StrFormatDateTime (char **St, tm *DateTime, char *Format)
   {
+    int Res;
     char c;
     int x;
     //
+    Res = 0;
     while (*Format)
       {
         if (*Format == '%')
@@ -978,23 +1169,23 @@ void StrFormatDateTime (char **St, tm *DateTime, char *Format)
               {
                 c = UpCase (*Format++);
                 if (c == 'D')
-                  NumToStr (St, DateTime->tm_mday, x);
+                  Res += NumToStr (St, DateTime->tm_mday, x | DigitsZeros);
                 else if (c == 'M')
                   if ((x == 3) && (DateTime->tm_mon < SIZEARRAY (MonthName)))
-                    StrCat (St, MonthName [DateTime->tm_mon]);
+                    Res += StrCat (St, MonthName [DateTime->tm_mon]);
                   else
-                    NumToStr (St, DateTime->tm_mon + 1, x);
+                    Res += NumToStr (St, DateTime->tm_mon + 1, x | DigitsZeros);
                 else if (c == 'Y')
                   if (x == 2)
-                    NumToStr (St, DateTime->tm_year % 100, 2 | DigitsZeros);
+                    Res += NumToStr (St, DateTime->tm_year % 100, 2 | DigitsZeros);
                   else
-                    NumToStr (St, DateTime->tm_year + 1900, x | DigitsZeros);
+                    Res += NumToStr (St, DateTime->tm_year + 1900, x | DigitsZeros);
                 else if (c == 'H')
-                  NumToStr (St, DateTime->tm_hour, x | DigitsZeros);
+                  Res += NumToStr (St, DateTime->tm_hour, x | DigitsZeros);
                 else if (c == 'N')
-                  NumToStr (St, DateTime->tm_min, x | DigitsZeros);
+                  Res += NumToStr (St, DateTime->tm_min, x | DigitsZeros);
                 else if (c == 'S')
-                  NumToStr (St, DateTime->tm_sec, x | DigitsZeros);
+                  Res += NumToStr (St, DateTime->tm_sec, x | DigitsZeros);
               }
           }
         else
@@ -1003,97 +1194,191 @@ void StrFormatDateTime (char **St, tm *DateTime, char *Format)
             (*St)++;
           }
       }
+    return Res;
   }
 
-void DataToHex (char **Dest, byte *Data, int DataLen)
+int StrTimeDelta (char **St, int Time)   // Convert seconds to days, hours etc
   {
+    const int TimeDay = 60 * 60 * 24;
+    const int TimeHour = 60 * 60;
+    const int TimeMin = 60;
+    int Res;
+    //
+    Res = 0;
+    if (Time >= TimeDay)   // >= 100 hours, show days
+      {
+        Res += IntToStr (St, Time / TimeDay);
+        Res += StrCat (St, " day");
+        if (Time >= 2 * TimeDay)
+          Res += StrCat (St, 's');
+        Res += StrCat (St, ' ');
+        Time = Time % TimeDay;
+      }
+    if (Time >= TimeHour)
+      {
+        Res += IntToStr (St, Time / TimeHour);
+        Res += StrCat (St, "h ");
+        Time = Time % TimeHour;
+      }
+    if (Time >= TimeMin)
+      {
+        Res += IntToStr (St, Time / TimeMin);
+        Res += StrCat (St, "m ");
+        Time = Time % TimeMin;
+      }
+    if (Time)
+      {
+        Res += IntToStr (St, Time);
+        Res += StrCat (St, "s ");
+      }
+    return Res;
+  }
+
+char Multiplier [] = "kMGTPEZY";
+
+int IntToStrScaled (char **Dest, longint n)
+  {
+    int x;
+    int Res;
+    //
+    Res = 0;
+    if (n < 0)
+      {
+        StrCat (Dest, '-');
+        Res++;
+        n = -n;
+      }
+    x = 0;
+    while (n >= 10000)
+      {
+        n /= 1000;
+        x++;
+      }
+    Res += IntToStr (Dest, n, 0 | DigitsZeros | DigitsCommas);
+    if (x)
+      {
+        StrCat (Dest, Multiplier [x - 1]);
+        Res++;
+      }
+    return Res;
+  }
+
+int DataToHex (char **Dest, byte *Data, int DataLen)
+  {
+    int Res;
     int i;
     //
+    Res = 0;
     i = 0;
-    if (*Dest)
-      if (DataLen)
-        while (true)
+    while (true)
+      {
+        Res += NumToStrBase (Dest, Data [i], 2 | DigitsZeros, 16);
+        i++;
+        if (i >= DataLen)
+          break;
+        if ((i % 32) == 0)
+          Res += StrCat (Dest, '\n');
+        else
           {
-            NumToStrBase (Dest, Data [i], 2 | DigitsZeros, 16);
-            i++;
-            if (i >= DataLen)
-              break;
-            *(*Dest)++ = ' ';
-            if ((i % 8) == 7)
-              *(*Dest)++ = ' ';
+            Res += StrCat (Dest, ' ');
+            if ((i % 8) == 0)
+              Res += StrCat (Dest, ' ');
           }
+      }
+    return Res;
   }
 
-void DataToHexAscii (char **Dest, byte *Data, int DataLen)
+int DataToHexAscii (char **Dest, byte *Data, int DataLen, int Layout)
   {
-    int i;
+    int i, Res, Res_;
     bool Hex = true;
     bool HexOld;
     //
     i = 0;
-    if (*Dest)
-      {
-        if (DataLen)
-          while (true)
+    Res_ = Res = 0;
+    if (DataLen)
+      while (true)
+        {
+          HexOld = Hex;
+          Hex = ((Data [i] < ' ') || (Data [i] >= 0x80) || Data [i] == '"');
+          if (!Hex && HexOld)
+            Res += StrCat (Dest, '\"');
+          if (Hex & !HexOld)
+            Res += StrCat (Dest, "\" ");
+          if (Hex)
             {
-              HexOld = Hex;
-              Hex = ((Data [i] < ' ') || (Data [i] >= 0x80));
-              if (!Hex && HexOld)
-                StrCat (Dest, '\"');
-              if (Hex & !HexOld)
-                StrCat (Dest, "\" ");
-              if (Hex)
-                {
-                  NumToStrBase (Dest, Data [i], 2 | DigitsZeros, 16);
-                  StrCat (Dest, ' ');
-                }
-              else
-                StrCat (Dest, Data [i]);
-              i++;
-              if (i >= DataLen)
-                break;
+              Res += NumToStrBase (Dest, Data [i], 2 | DigitsZeros, 16);
+              Res += StrCat (Dest, ' ');
             }
-        if (!Hex)
-          StrCat (Dest, "\" ");
-      }
+          else
+            Res += StrCat (Dest, Data [i]);
+          i++;
+          if (i >= DataLen)
+            break;
+          if (Hex && Layout > 0)
+            if (Res - Res_ >= Layout)   // New "Line needed"
+              {
+                Res += StrCat (Dest, '\n');
+                Res_ = Res;
+              }
+        }
+    if (!Hex)
+      Res += StrCat (Dest, "\" ");
+    return Res;
   }
 
 // Concatenate string/char/fixed string
 
-void StrCat (char **Dest, const char *St)   // Append String
+int StrCat (char **Dest, const char *St)   // Append String
   {
-    if (*Dest)
-      if (St)
-        while (*St)
-          *(*Dest)++ = *St++;
+    int Res;
+    //
+    Res = 0;
+    if (St)
+      while (*St)
+        {
+          if (Dest && *Dest)
+            *(*Dest)++ = *St;
+          St++;
+          Res++;
+        }
+    return Res;
   }
 
-void StrCat (char **Dest, const char Ch)   // Append Char
+int StrCat (char **Dest, const char Ch)   // Append Char
   {
-    if (*Dest)
+    if (Dest && *Dest)
       *(*Dest)++ = Ch;
+    return 1;
   }
 
-void StrCat (char **Dest, const char Ch, int n)   // Append Char repeated
+int StrCat (char **Dest, const char Ch, int n)   // Append Char repeated
   {
+    int i;
+    //
     if (*Dest)
-      while (n-- > 0)
+      for (i = 0; i < n; i++)
         *(*Dest)++ = Ch;
+    return n;
   }
 
-void StrCat (char **Dest, const char *St, int n)   // Append String length limited
+int StrCat (char **Dest, const char *St, int n)   // Append String length limited
   {
-    if (*Dest)
-      if (St)
-        while (true)
-          {
-            if (n == 0)
-              break;
-            if (*St == 0)
-              break;
-            *(*Dest)++ = *St++;
-            n--;
-          }
+    int Len;
+    //
+    Len = 0;
+    if (St)
+      while (true)
+        {
+          if (n == 0)
+            break;
+          if (*St == 0)
+            break;
+          StrCat (Dest, *St++);
+          Len++;
+          n--;
+        }
+    return Len;
   }
 
 void StrInsert (char *Dest, char Ch)
@@ -1113,8 +1398,9 @@ void StrInsert (char *Dest, char Ch)
 
 void StrInsert (char *Dest, char *St)
   {
-    while (*St)
-      StrInsert (Dest++, *St++);
+    if (St)
+      while (*St)
+        StrInsert (Dest++, *St++);
   }
 
 void StrDelete (char *Ch)
@@ -1151,24 +1437,121 @@ void StrAppend (char *Dest, char *St)
     *Dest = 0;
   }
 
+bool StrChangeCase (char *St, int Len)
+  {
+    bool Res;
+    int nlc, nuc;
+    int Pass, i, FirstAlpha;
+    char c;
+    //
+    Res = false;
+    FirstAlpha = -1;
+    Len = Max (Len, 1);
+    nlc = nuc = 0;
+    for (Pass = 0; Pass < 2; Pass++)
+      for (i = 0; i < Len; i++)
+        {
+          c = St [i];
+          if (IsAlpha (c))
+            if (Pass == 0)
+              {
+                if (FirstAlpha < 0)
+                  FirstAlpha = i;
+                if (IsLower (c))
+                  nlc++;
+                else
+                  nuc++;
+              }
+            else   // Pass == 1
+              {
+                if (nlc == 0)   // no lower case so downshift all
+                  St [i] = LoCase (c);
+                else if (nuc > 0)   // mixed case so upshift all
+                  St [i] = UpCase (c);
+                else   // nuc == 0   no upper case so upshift the 1st
+                  if (i == FirstAlpha)
+                    St [i] = UpCase (c);
+                if (c != St [i])
+                  Res = true;
+              }
+        }
+    return Res;
+  }
+
+char* StrMake (char *s1, char *s2)   // Makes new string from 2 strings. User must free
+  {
+    char *Res, *r;
+    //
+    Res = (char *) malloc (StrLen (s1) + StrLen (s2) + 1);
+    r = Res;
+    StrCat (&r, s1);
+    //StrCat (&r, ' ');
+    StrCat (&r, s2);
+    *r = 0;
+    return Res;
+  }
+
+char* StrMake (char *s1, int n)   // Makes new string from part of 1 string. User must free
+  {
+    char *Res;
+    //
+    Res = (char *) malloc (n + 1);
+    memcpy (Res, s1, n);
+    Res [n] = 0;
+    return Res;
+  }
+
+/*
+char *StrReplace (char *St, char *Target, char *Replacement)   // Creates dynamic string with all occurences of Target replaced with Replacement
+  {
+    char *Res, r;
+    char *s, *s_;
+    int p;
+    //
+    Res = NULL;
+    while (true)
+      {
+        s = St;
+        l = 0;
+        while (true)
+          {
+            s_ = StrPos (s_, Target);
+            if (s_ == NULL)
+              {
+                if (Res
+              break;
+            if (p == 1)
+              memcpy (r, s, s_ - s);
+            l += s_ - s;
+  }
+*/
+
 // Filenames
+
+void StrRemoveTrailingSlash (char *Path)
+  {
+    int l;
+    //
+    l = StrLen (Path);
+    if (l > 1 && Path [l - 1] == PathDelimiter)
+      Path [l - 1] = 0;
+  }
 
 char *StrFindFileExtension (char *FileName)
   {
+    if (*FileName == '.')   // Read only file tag
+      FileName++;  // step past
     return StrPosLast (FileName, '.');
-    /*char *Res;
+  }
+
+char *StrFindFilename (char *FileName)
+  {
+    char *Res;
     //
-    Res = NULL;
-    if (FileName)
-      while (true)
-        {
-          if (*FileName == 0)
-            break;
-          if (*FileName == '.')
-            Res = FileName;
-          FileName++;
-        }
-    return Res;*/
+    Res = StrPosLast (FileName, PathDelimiter);
+    if (Res)   // Slash found
+      return Res + 1;   // return file past it
+    return FileName;   // no slash, return original Filename
   }
 
 void StrAddExtension (char *Filename, char *Extension)
@@ -1204,6 +1587,54 @@ bool StrExtractPath (char *Filepath, char ** Path)
     StrAssignCopy (Path, Filepath);
     *p = PathDelimiter;
     return true;
+  }
+
+char *ResourcePath = NULL;
+
+void ResourcePathSet (char *argv0)
+  {
+    char *f;
+    //
+    StrAssignCopy (&ResourcePath, argv0);   // Get the full programme path
+    f = StrFindFilename (ResourcePath);
+    if (f == ResourcePath)   // no path specified in command line
+      GetCurrentPath (&ResourcePath);
+    else
+      *f = 0;   // Remove file from argv0
+    DebugAddS ("Resource Path", ResourcePath);
+  }
+
+char* ResourcePathAdd (char *Filename)   // caller must free
+  {
+    char *Res, *f, *r;
+    //
+    Res = NULL;
+    //if (Filename [0] != PathDelimiter)
+    f = StrFindFilename (Filename);
+    if ((f == Filename) && ResourcePath)   // no path is specified AND ResourcePath is
+      {
+        Res = (char *) malloc (StrLen (ResourcePath) + StrLen (f) + 8);
+        r = Res;
+        StrCat (&r, ResourcePath);
+        if (*(r - 1) != PathDelimiter)   // no trailing slash?
+          StrCat (&r, PathDelimiter);   // so add one
+        StrCat (&r, f);
+        *r = 0;
+      }
+    else
+      StrAssignCopy (&Res, Filename);
+    return Res;
+  }
+
+int FileOpen_ (char *Filename, _FileOpenMode fom)
+  {
+    int File;
+    char *FilePath;
+    //
+    FilePath = ResourcePathAdd (Filename);
+    File = FileOpen (FilePath, fom);
+    free (FilePath);
+    return File;
   }
 
 
@@ -1244,6 +1675,11 @@ void Limit (int *Value, int MinValue, int MaxValue)
     else
       *Value = MinValue;
   }*/
+
+word SwapWordBytes (word Word)
+  {
+    return (Word >> 8) | ((Word & 0xFF) << 8);
+  }
 
 int Sqr (int x)
   {
@@ -1390,9 +1826,7 @@ bool GetDateTime (tm *DateTime)
       return false;
     info = localtime (&RawTime);
     memcpy (DateTime, info, sizeof (tm));
-    #ifdef _Windows
     DateTime->tm_year += 1900;
-    #endif // _Windows
     return true;
   }
 
@@ -1781,15 +2215,28 @@ bool TRingBuffer::AddLine (char *St)
 
 ///////////////////////////////////////////////////////////////////////////////
 //
-// FILING / DIRECTORY / LOGGING
+// FILING / DIRECTORY
 
-int FileOpen (char *Filename, _FileOpenMode FileOpenMode)
+int FileOpen (const char *Filename, _FileOpenMode FileOpenMode)
   {
+    char *Filename_;
+    //
+    // Make Backup?
+    if (FileOpenMode == foWrite)
+      {
+        Filename_ = NULL;
+        StrAssignCopy (&Filename_, Filename);
+        *(StrPos (Filename_, '\0') - 1) = '~';   // Change Last character
+        if (FileExists (Filename_))
+          FileDelete (Filename_);
+        FileRename (Filename, Filename_);
+        StrAssignCopy (&Filename_, NULL);
+      }
     #ifdef _Windows
     if (FileOpenMode == foRead)
       return open (Filename, O_RDONLY | O_BINARY);
     if (FileOpenMode == foWrite)
-      return open (Filename, O_RDWR | O_BINARY | O_CREAT | O_TRUNC);//, S_IREAD | S_IWRITE);   // Open file for writing
+      return open (Filename, O_RDWR | O_BINARY | O_CREAT | O_TRUNC, S_IREAD | S_IWRITE);   // Open file for writing
     // foAppend
     return open (Filename, O_WRONLY | O_BINARY | O_APPEND | O_CREAT, FILE_ATTRIBUTE_NORMAL);//, S_IREAD | S_IWRITE);   // Open file for appending
     #else
@@ -1806,7 +2253,17 @@ void FileClose (int File)
     close (File);
   }
 
-bool FileExists (char *Filename)
+bool FileDelete (const char *Filename)
+  {
+    return (remove (Filename) == 0);
+  }
+
+bool FileRename (const char *OldFilename, const char *NewFilename)
+  {
+    return (rename (OldFilename, NewFilename) == 0);
+  }
+
+bool FileExists (const char *Filename)
   {
     int File;
     //
@@ -1875,35 +2332,171 @@ bool FileWriteLine (int File, char *St)
     return Res;
   }
 
-void ForcePath (char *Path)
+// Reads Complete File: Text (ASCII/UTF8/UTF16->UTF8) and Binary (->Mixed Hex+ASCII)
+// Returns pointer to contents. Sets Hex, Size & EOL
+// If Hex is true, Hex/ASCII conversion is forced.
+
+char *FileTextReadAll (char *Filename, int SizeMax, bool *Hex, int *Size, _EOL *EOL)
   {
-    char *Path_;
-    char *x;
-    bool Done;
-    //DIR *pDir;
-    //struct stat PathStat;
+    bool Res;
+    int File;
+    word BOM;
+    int nCR, nLF, nTAB, nNA;
+    int c;
+    char *Buffer, *Buffer_, *p;
+    word *p16;
+    int Size_;
     //
-    Path_ = (char *) malloc (StrLen (Path) + 1);
-    x = Path;
-    Done = false;
-    do
+    Res = false;
+    Buffer = Buffer_ = NULL;
+    *EOL = eolLF;
+    *Size = 0;
+    File = FileOpen (Filename, foRead);
+    if (File >= 0)
       {
-        strcpy (Path_, Path);
-        x = StrPos (x, PathDelimiter);
-        if (x == NULL)
-          Done = true;
-        else
-          Path_ [x - Path] = 0;
-        //mkdir (Path_);   // Windows
-        #ifdef _Windows
-        mkdir (Path_);   // Windows
-        #else
-        mkdir (Path_, 0777);   // Linux
-        #endif // _Windows
-        x++;
+        *Size = FileSize (File);
+        if (*Size < SizeMax)
+          {
+            Buffer = (char *) malloc (*Size + 1);
+            if (Buffer)
+              if (FileRead (File, (byte *) Buffer, *Size) == *Size)
+                {
+                  Buffer [*Size] = 0;   // Terminate
+                  nCR = nLF = nTAB = nNA = 0;
+                  BOM = *((word *) Buffer);
+                  if (!*Hex && (BOM == 0xFFFE || BOM == 0xFEFF))   // UTF16 file
+                    {
+                      Size_ = 0;
+                      p16 = (word *) Buffer;
+                      p16++;
+                      p = NULL;
+                      while (true)
+                        {
+                          if (p16 < (word *) &(Buffer [*Size]))
+                            c = UTF16Read (&p16);   // Read UTF8 character  swap bytes if
+                          else
+                            c = 0;
+                          if (BOM == 0xFFFE)
+                            c = SwapWordBytes (c);
+                          //DebugAddHex ("UFT16", c);//####
+                          Size_ += UTF32ToStr (&p, c);
+                          if (c == 0)
+                            {
+                              if (Buffer_)
+                                break;
+                              Buffer_ = (char *) malloc (Size_);
+                              p = Buffer_;
+                              Size_ = 0;
+                              p16 = (word *) Buffer;
+                              p16++;
+                            }
+                        }
+                      free (Buffer);
+                      Buffer = Buffer_;
+                      *Size = Size_ - 1;   // don't include terminating '\0'
+                    }
+                  if (!*Hex && (*Size > 16))   // determine if text, UTF8 or Binary
+                    {
+                      p = Buffer;
+                      while (true)
+                        {
+                          c = UTF8Read (&p);   // Read UTF8 character
+                          //DebugAddHex ("UFT8", c);//####
+                          if (c == 0)
+                            break;
+                          if (c < 0)
+                            nNA++;
+                          else if (c == cr) nCR++;
+                          else if (c == lf) nLF++;
+                          else if (c == tab) nTAB++;
+                          else if (c < ' ') nNA++;
+                        }
+                      *Hex = (p != Buffer + *Size) || (nNA > *Size / 4);   // > 25% non ascii "crap"? Looks like a binary file
+                    }
+                  if (*Hex && (*Size * 3 < SizeMax))   // Hex file (and of acceptable size)
+                    {
+                      Size_ = DataToHexAscii ((char **) NULL, (byte *) Buffer, *Size, 80);
+                      Buffer_ = (char *) malloc (Size_ + 1);
+                      if (Buffer_)
+                        {
+                          p = Buffer_;
+                          DataToHexAscii (&p, (byte *) Buffer, *Size, 80);
+                          *p = 0;   // Terminate
+                          free (Buffer);
+                          Buffer = Buffer_;
+                          *Size = Size_;
+                          Res = true;
+                        }
+                    }
+                  else if (!*Hex)   // normal text file
+                    {
+                      *EOL = eolLF;
+                      if (nLF || nCR)   // Determine EOL type
+                        if (nLF > nCR)
+                          *EOL = eolLF;
+                        else if (nCR > nLF)
+                          *EOL = eolCR;
+                        else
+                          *EOL = eolCRLF;
+                      Res = true;
+                    }
+                }
+          }
+        FileClose (File);
+       }
+    DebugAddInt ("TextLoad: EOL", *EOL);
+    if (!Res)
+      free (Buffer);
+    return Buffer;
+  }
+
+/*
+    int File, Size;
+    byte *Contents;
+    //
+    Contents = NULL;
+    File = FileOpen (Filename, foRead);
+    if (File >= 0)
+      {
+        Size = FileSize (File);
+        Contents = (char *) malloc (Size) + 1;
+        if (FileRead (File, Contents, Size) != Size)
+          {
+            free (Contents)
+            Contents = NULL;
+          }
+        FileClose (File);
       }
-    while (!Done);
-    free (Path_);   // Memory leak fixed 03 Mar 2015 ****
+    return Contents;
+  }*/
+
+bool ForcePath (char *Path, bool FileIncluded)
+  {
+    char *x1, *x2;
+    char c;
+    //
+    x1 = Path;
+    if (*x1 == PathDelimiter)
+      x1++;
+    while (true)
+      {
+        x2 = StrPos (x1, PathDelimiter);
+        if (x2 == NULL)   // have found the last slash
+          {
+            if (FileIncluded)
+              return true;
+            x2 = StrPos (x1, '\0');   // find end
+          }
+        c = *x2;
+        *x2 = 0;   // tag end
+        if (!DirExists (Path))
+          if (!DirMake (Path))
+            return false;
+        if (c == 0)   // we are done
+          return true;
+        *x2++ = c;   // restore slash and step past
+        x1 = x2;
+      }
   }
 
 bool GetCurrentPath (char **Path)   // Caller must free Result
@@ -1914,9 +2507,9 @@ bool GetCurrentPath (char **Path)   // Caller must free Result
     if (chdir (".") == 0)   // Try to be in a valid place (####)
       {
         p1 = (char *) malloc (MaxPath + 1);
-        getcwd (p1, MaxPath + 1);
+        getcwd (p1, MaxPath + 1);   // %%%% Windows can return "(unreachable)..."
         #ifndef _Windows
-        if (p1 [0] == PathDelimiter)   // Valid path, not "(unreachable)..."
+        if (p1 [0] == PathDelimiter)   // Valid full path
         #endif // _Windows
           StrAssignCopy (Path, p1);
         free (p1);
@@ -1925,17 +2518,72 @@ bool GetCurrentPath (char **Path)   // Caller must free Result
     return false;
   }
 
+bool FileDateTimeWrite (char *Filename, time_t DateTime)
+  {
+    #ifdef _Windows
+    struct _utimbuf utb;
+    //
+    utb.actime = DateTime;
+    utb.modtime = DateTime;
+    if (_utime (Filename, &utb) != 0)   // fail
+      return false;
+    #else
+    struct utimbuf utb;
+    //
+    utb.actime = DateTime;
+    utb.modtime = DateTime;
+    if (utime (Filename, &utb) != 0)   // fail
+      return false;
+    #endif // _Windows
+    return true;
+  }
+
+/*    #ifdef _Windows
+    _utime (Filename
+
+    HANDLE f;
+    longint DateTime_;
+    struct _FILETIME ft;
+    //
+    // Convert Linux time to magic windows time
+    DateTime_ = DateTime;
+    // Calculate Windows time. Offset 369 years and resolution 100nS
+    //DateTime_ = (DateTime_ + 11644473600L) * 10000000L;
+    DateTime_ = DateTime_ + 11644473600L;  // 134774 * 24 * 60 * 60
+    //DateTime_ = DateTime_ + 3600L;   // fudge ######
+    DateTime_ = DateTime_ * 10000000L;  // scale 1 second to 100nS
+    f = CreateFile (Filename, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    ft.dwLowDateTime = (DWORD) DateTime_;
+    ft.dwHighDateTime = ((longint) DateTime_) >> 32L;
+    SetFileTime (f, &ft, &ft, &ft);
+    CloseHandle (f);
+    #else
+    struct utimbuf utb;
+    //
+    utb.actime = DateTime;
+    utb.modtime = DateTime;
+    if (utime (Filename, &utb) != 0)   // fail
+      return false;
+    #endif // _Windows
+    return true;
+  }*/
+
 bool DirItemFromFilename (char *Filename, _DirItem *Item)
   {
     struct stat st;
+    int LnkSiz;
     //
+    memset (Item, 0, sizeof (_DirItem));
+    #ifdef _Windows
     if (stat (Filename, &st) == 0)
+    #else
+    if (lstat (Filename, &st) == 0)
+    #endif
       {
-        //memset (Item, 0, sizeof (_DirEntry));
-        StrAssignCopy (&Item->Name, Filename);
+        StrAssignCopy (&Item->Name, Filename);//StrFindFilename (Filename));
         Item->Directory = S_ISDIR (st.st_mode) != 0;
+        Item->SymLink = false;
         #ifdef _Windows
-        //Item->SymLink = false;
         if (Item->Directory)
           Item->Size = st.st_size;
         else
@@ -1948,16 +2596,29 @@ bool DirItemFromFilename (char *Filename, _DirItem *Item)
               {
                 szlo = GetFileSize (f, &szhi);
                 CloseHandle (f);
-                Item->Size = ((longint) szhi << (longint) 32) | szlo;
+                Item->Size = ((longint) szhi << 32L) | (longint) szlo;
               }
           }
         #else
         Item->Size = st.st_size;
+        Item->SymLink = S_ISLNK (st.st_mode) != 0;
+        if (Item->SymLink)   // This is a symbolic link
+          {
+            Item->SymLinkTarget = (char *) malloc (Item->Size + 1);
+            LnkSiz = readlink (Item->Name, Item->SymLinkTarget, Item->Size);   // read link target
+            if (LnkSiz == Item->Size)   // correct length of target string
+              Item->SymLinkTarget [LnkSiz] = 0;   // terminate string
+            else
+              {
+                free (Item->SymLinkTarget);
+                Item->SymLinkTarget = NULL;
+              }
+          }
         #endif
         Item->DateTime = st.st_mtime;
         Item->Attrib = st.st_mode;   // Keep for permissions etc
         Item->Tagged = false;
-        Item->Data = NULL;
+        //Item->Data = NULL;
         return true;
       }
     return false;
@@ -1967,8 +2628,10 @@ void DirItemFree (_DirItem *Item)
   {
     free (Item->Name);
     Item->Name = NULL;
+    free (Item->SymLinkTarget);
+    Item->SymLinkTarget = NULL;
     free (Item->Data);
-    Item->Data = NULL;
+    //Item->Data = NULL;
   }
 
 void DirFree (_DirItem *Dir)
@@ -1984,17 +2647,20 @@ void DirFree (_DirItem *Dir)
       }
   }
 
-typedef bool _ReadDirCallback (_DirItem *Item);
-
-void DirRead (_DirItem **Dir, _ReadDirCallback CallBack)
+void DirRead (const char *Path, _DirItem **Dir, _DirReadCallback CallBack, bool Recurse)
   {
+    char *FilePath, *f;
     _DirItem *New;
     struct dirent *de;
     DIR *dir;
     bool Include;
     //
+    FilePath = (char *) malloc (MaxPath);
     New = NULL;
-    dir = opendir (".");
+    if (Path)
+      dir = opendir (Path);
+    else
+      dir = opendir (".");
     if (dir != NULL)
       {
         while (true)
@@ -2002,15 +2668,25 @@ void DirRead (_DirItem **Dir, _ReadDirCallback CallBack)
             de = readdir (dir);
             if (de == NULL)
               break;
-            if (!StrSame (de->d_name, ".")) // && !StrSame (de->d_name, ".."))
+            if (!StrSame (de->d_name, ".")) //&& !StrSame (de->d_name, ".."))
               {
                 if (New == NULL)
                   {
                     New = (_DirItem *) malloc (sizeof (_DirItem));
                     memset (New, 0, sizeof (_DirItem));
                   }
-                if (DirItemFromFilename (de->d_name, New))
+                f = FilePath;   // Build full file path (if Path specified)
+                if (Path)
                   {
+                    StrCat (&f, Path);
+                    StrCat (&f, PathDelimiter);
+                  }
+                StrCat (&f, de->d_name);
+                *f = 0;
+                if (DirItemFromFilename (FilePath, New))
+                  {
+                    if (New->Directory && Recurse && !StrSame (de->d_name, ".."))
+                      DirRead (FilePath, Dir, CallBack, Recurse);
                     Include = true;
                     if (CallBack)
                       Include = CallBack (New);
@@ -2028,7 +2704,61 @@ void DirRead (_DirItem **Dir, _ReadDirCallback CallBack)
       }
     if (New)
       free (New);
+    free (FilePath);
   }
+
+bool DirExists (char *Path)
+  {
+    DIR *d;
+    //
+    d = opendir (Path);
+    if (d)
+      {
+        closedir (d);
+        return true;
+      }
+    return false;
+  }
+
+bool DirMake (char *Name)
+  {
+    #ifdef _Windows
+    return mkdir (Name) == 0;
+    #else
+    return mkdir (Name, S_IRWXU | S_IRWXG | S_IRWXO) == 0;
+    #endif
+  }
+
+bool DiskSpace (char *Path, longint *Capacity, longint *Free)
+  {
+#ifdef _Windows
+    DWORD SectorsPerCluster;
+    DWORD BytesPerSector;
+    DWORD FreeClusters;
+    DWORD Clusters;
+    if (GetDiskFreeSpace (Path, &SectorsPerCluster, &BytesPerSector, &FreeClusters, &Clusters))
+      {
+        *Capacity = (longint) SectorsPerCluster * (longint) BytesPerSector * (longint) Clusters;
+        *Free = (longint) SectorsPerCluster * (longint) BytesPerSector * (longint) FreeClusters;
+        return true;
+      }
+#else
+    struct statvfs DriveStats;
+    //
+    if (statvfs (Path, &DriveStats) == 0)
+      {
+        *Capacity = (longint) DriveStats.f_blocks * (longint) DriveStats.f_bsize;
+        *Free = (longint) DriveStats.f_bfree * (longint) DriveStats.f_bsize;
+        return true;
+      }
+#endif // _Windows
+    return false;
+  }
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+//
+// LOG
 
 bool CurrentDateTimeToStr (char **St, bool Date, bool Time)
   {
@@ -2053,48 +2783,41 @@ bool CurrentDateTimeToStr (char **St, bool Date, bool Time)
     return false;
   }
 
-bool Log (char *Filename, char *Line)
+bool Log (char *Line)
   {
-    char *Name, *x;
+    char *Name, *n;
+    char *NameFull;
     tm DateTime;
     int File;
     bool Res;
     //
     Res = false;
-    Name = (char *) malloc (Max (StrLen (Line) + 16, 2 * StrLen (Filename) + 32));
-    x = Name;
-    StrCat (&x, Filename);
+    Name = (char *) malloc (Max (StrLen (Line) + 64, StrLen (ResourcePath) + 64));
     if (GetDateTime (&DateTime))
       {
-        StrCat (&x, PathDelimiter);
-        NumToStr (&x, DateTime.tm_year, 4 | DigitsZeros);
-        NumToStr (&x, DateTime.tm_mon + 1, 2 | DigitsZeros);
-        *x = 0;
-        ForcePath (Name);
-        StrCat (&x, PathDelimiter);
-        StrCat (&x, Filename);
-        NumToStr (&x, DateTime.tm_year, 4 | DigitsZeros);
-        NumToStr (&x, DateTime.tm_mon + 1, 2 | DigitsZeros);
-        NumToStr (&x, DateTime.tm_mday, 2 | DigitsZeros);
-        StrCat (&x, ".TXT");
-        *x = 0;
-        // was File = SDL_RWFromFile (Name, "a");   // Open the log file
-        File = FileOpen (Name, foAppend);   // Open the log file
+        n = Name;
+        NumToStr (&n, DateTime.tm_year, 4 | DigitsZeros);
+        NumToStr (&n, DateTime.tm_mon + 1, 2 | DigitsZeros);
+        NumToStr (&n, DateTime.tm_mday, 2 | DigitsZeros);
+        StrCat (&n, ".log");
+        *n = 0;
+        NameFull = ResourcePathAdd (Name);
+        File = FileOpen (NameFull, foAppend);   // Open the log file
         if (File >= 0)
           {
-            x = Name;
-            NumToStr (&x, DateTime.tm_hour, 2 | DigitsZeros);
-            NumToStr (&x, DateTime.tm_min, 2 | DigitsZeros);
-            *x++ = ':';
-            NumToStr (&x, DateTime.tm_sec, 2 | DigitsZeros);
-            *x++ = '\t';
-            StrCat (&x, Line);
-            *x++ = '\r';
-            *x++ = '\n';
-            FileWrite (File, (byte *) Name, x - Name);
+            n = Name;
+            NumToStr (&n, DateTime.tm_hour, 2 | DigitsZeros);
+            NumToStr (&n, DateTime.tm_min, 2 | DigitsZeros);
+            *n++ = ':';
+            NumToStr (&n, DateTime.tm_sec, 2 | DigitsZeros);
+            *n++ = '\t';
+            StrCat (&n, Line);
+            *n++ = '\n';
+            FileWrite (File, (byte *) Name, n - Name);
             FileClose (File);
             Res = true;
           }
+        free (NameFull);
       }
     free (Name);
     return Res;

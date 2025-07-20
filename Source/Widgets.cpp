@@ -14,6 +14,7 @@
 
 
 #include <string.h>
+#include <unistd.h>
 
 #include "Widgets.hpp"
 #include "WidgetsDriver.hpp"
@@ -28,8 +29,8 @@ int cButton1 = 0xE0E0E0;
 int cButton2 = 0xC0C0C0;
 int cText = cBlack;
 int cTextBgnd = cWhite;
-int cSelected = ColourAdjust (cBlue, 190);
-int cMenu = -1; //ColourAdjust (cBlue, 180); //-1; //cWhite;
+int cSelected = ColourAdjust (cBlue, 185);
+//int cMenu = -1; //ColourAdjust (cBlue, 180); //-1; //cWhite;
 //int cMenuText = cBlue;
 //int cMenuText = cBlack;
 //int cTextHighlight = cBlack; //cBlack;cWhite
@@ -45,78 +46,60 @@ int WindowCount = 0;
 int CreateCount = 0;
 int DelCount = 0;
 
-char *HomePath = NULL;
-
-char *AddHomePath (const char *Filename)
-  {
-    char *Res, *r;
-    //
-    Res = NULL;
-    if (Filename [0] == PathDelimiter)
-      StrAssignCopy (&Res, Filename);
-    else
-      {
-        Res = (char *) malloc (StrLen (HomePath) + StrLen (Filename) + 8);
-        r = Res;
-        StrCat (&r, HomePath);
-        StrCat (&r, PathDelimiter);
-        StrCat (&r, Filename);
-        *r = 0;
-      }
-    return Res;
-  }
-
+word MouseKeys = 0x0000;
 
 _Point BottomRight (_Rect *Rect)
   {
     return {Rect->x + Rect->Width - 1, Rect->y + Rect->Height - 1};
   }
 
+
 ///////////////////////////////////////////////////////////////////////////////
 //
-// DEBUG
+// DEBUG & SUPPORT
 
-void StrCat_ (char **sp, char *St, int Len)
+// debug string helpers
+void StrCat_ (char **Dest, char *St, int Len)
   {
     byte c;
-    char *St_;
+    char *Dest0;
     //
-    St_ = St;
+    Dest0 = *Dest;
     if (St)
-      while (*St && St - St_ < Len)
+      while (*St && (*Dest - Dest0 < Len))
         {
           c = *St++;
           if (c < ' ')
             {
-              StrCat (sp, '^');
-              StrCat (sp, c | '@');
+              StrCat (Dest, '^');
+              StrCat (Dest, c | '@');
             }
           else if (c < 0x80)
-            StrCat (sp, c);
+            StrCat (Dest, c);
           else
-            NumToHex (sp, c, 2);
+            NumToHex (Dest, c, 2);
         }
   }
 
 void PointToStr (char **St, _Point Point)
   {
     StrCat (St, '(');
-    NumToStr (St, Point.x);
+    IntToStr (St, Point.x);
     StrCat (St, ',');
-    NumToStr (St, Point.y);
+    IntToStr (St, Point.y);
     StrCat (St, ')');
   }
 
-void RectToStr (char **sp, _Rect *Rec)
+void RectToStr (char **sp, _Rect Rec)
   {
     StrCat (sp, '(');
-    NumToStr (sp, Rec->x);
+    IntToStr (sp, Rec.x);
     StrCat (sp, ',');
-    NumToStr (sp, Rec->y);
-    StrCat (sp, ")-");
-    NumToStr (sp, Rec->Width);
+    IntToStr (sp, Rec.y);
+    StrCat (sp, ") ");
+    IntToStr (sp, Rec.Width);
     StrCat (sp, 'x');
-    NumToStr (sp, Rec->Height);
+    IntToStr (sp, Rec.Height);
   }
 
 void DebugAddS (const char *s1, const char *s2)
@@ -138,8 +121,10 @@ void DebugAddIntDecHex (const char *St, int n, bool Hex)
     char *s = (char *) malloc (StrLen (St) + 16);
     char *p = s;
     if (St)
-      StrCat (&p, St);
-    StrCat (&p, ' ');
+      {
+        StrCat (&p, St);
+        StrCat (&p, ' ');
+      }
     if (Hex)
       NumToStrBase (&p, n, 0, 16);
     else
@@ -161,7 +146,7 @@ void DebugAddHex (const char *St, int n)
 
 void DebugAddP (const char *St, _Point pnt)
   {
-    char *s = (char *) malloc (StrLen (St) + 16);
+    char *s = (char *) malloc (StrLen (St) + 64);
     char *p = s;
     if (St)
       StrCat (&p, St);
@@ -172,9 +157,9 @@ void DebugAddP (const char *St, _Point pnt)
     free (s);
   }
 
-void DebugAddR (const char *St, _Rect *r)
+void DebugAddR (const char *St, _Rect r)
   {
-    char *s = (char *) malloc (StrLen (St) + 32);
+    char *s = (char *) malloc (StrLen (St) + 128);
     char *p = s;
     if (St)
       StrCat (&p, St);
@@ -185,47 +170,228 @@ void DebugAddR (const char *St, _Rect *r)
     free (s);
   }
 
+void DebugAddError (const char* Message)
+  {
+    char *s = (char *) malloc (StrLen (Message) + 32);
+    char *ps = s;
+    //
+    StrCat (&ps, "**** ERROR ");
+    StrCat (&ps, Message);
+    *ps = 0;
+    //
+    DebugAdd (s);
+    free (s);
+  }
+
 
 ///////////////////////////////////////////////////////////////////////////////
 //
-// RENDER TEXTURE DEBUG
+// RENDER / DRAW BASICS
 
-//#define DebugShowRenders
+_Bitmap *TargetBitmap = NULL;
+_Point TargetBitmapScroll = {0, 0};   // Set by Draw() from _Container::Scroll
+_Point TargetBitmapSize = {0, 0};   // Set by Draw() from _Container::Scroll
 
-void RenderTexture_ (_Window *Window, _Texture *Texture, _Rect RecSource, int DestX, int DestY, byte AlphaOffset, char *Text)
+void RenderDrawPixel (int x, int y, int Colour)
   {
-    RenderTexture (Window, Texture, RecSource, DestX, DestY, AlphaOffset);
-    #ifdef DebugShowRenders
-    char *s, *sp;
-    s = (char *) malloc (100 + StrLen (Text));
-    sp = s;
-    StrCat (&sp, "    Rendering: ");
-    RectToStr (&sp, &RecSource);
-    StrCat (&sp, " --> ");
-    PointToStr (&sp, {DestX, DestY});
-    if (AlphaOffset != 0xFF)
+    x -= TargetBitmapScroll.x;
+    y -= TargetBitmapScroll.y;
+    //if (x >= 0 && y >= 0 && x < TargetBitmapSize.x && y < TargetBitmapSize.y)
+      BitmapSetPixel (TargetBitmap, x, y, Colour | 0xFF000000);
+  }
+
+void RenderDrawPixelAlpha (int x, int y, int Colour, byte Alpha)
+  {
+    int Colour2;
+    byte Alpha2;
+    //
+    x -= TargetBitmapScroll.x;
+    y -= TargetBitmapScroll.y;
+    //if (x >= 0 && y >= 0 && x < TargetBitmapSize.x && y < TargetBitmapSize.y)
       {
-        StrCat (&sp, ' ');
-        NumToHex (&sp, AlphaOffset);
+        Colour2 = BitmapGetPixel (TargetBitmap, x, y);
+        Alpha2 = AlphaGet (&Colour2);
+        if (Alpha2)
+          {
+            Colour = AlphaBlend (Colour, Colour2, Alpha);
+            Alpha = 0xFF;
+          }
+        AlphaSet (&Colour, Alpha);
+        BitmapSetPixel (TargetBitmap, x, y, Colour);
       }
-    /*RectOriginToStr (&sp, &RecDest);
-    StrCat (&sp, ' ');
-    RectSizeToStr (&sp, &RecSource);
-    if (RecSource.Width != RecDest.Width || RecSource.Width != RecDest.Width)
+  }
+
+void RenderDrawLine (int Colour, int x1, int y1, int x2, int y2)
+  {
+    int dx, dy, sx, sy;
+    int err, err2;
+    //
+    if (x1 == x2 && y1 == y2)   // Point
+      RenderDrawPixel (x1, y1, Colour);
+    else
       {
-        StrCat (&sp, "==>");
-        RectSizeToStr (&sp, &RecDest);
-      }*/
-    if (Text)
-      {
-        StrCat (&sp, "  \"");
-        StrCat_ (&sp, Text);
-        StrCat (&sp, '\"');
+        if (x1 == x2)   // vertical line
+          while (true)
+            {
+              RenderDrawPixel (x1, y1, Colour);
+              if (y1 < y2)
+                y1++;
+              else if (y1 > y2)
+                y1--;
+              else
+                break;
+            }
+        else if (y1 == y2)   // horizontal line
+          while (true)
+            {
+              RenderDrawPixel (x1, y1, Colour);
+              if (x1 < x2)
+                x1++;
+              else if (x1 > x2)
+                x1--;
+              else
+                break;
+            }
+        else   // diagonal line - https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
+          {
+            dx =  Abs (x2 - x1);
+            sx =  x1 < x2 ? 1 : -1;
+            dy = -Abs (y2 - y1);
+            sy = y1 < y2 ? 1 : -1;
+            err = dx + dy;  // error value e_xy
+            while (true)
+              {
+                RenderDrawPixel (x1, y1, Colour);
+                if (x1 == x2 && y1 == y2)
+                  break;
+                err2 = err * 2;
+                if (err2 >= dy)   // e_xy+e_x > 0
+                  {
+                    err += dy;
+                    x1 += sx;
+                  }
+                if (err2 <= dx)   // e_xy+e_y < 0
+                  {
+                    err += dx;
+                    y1 += sy;
+                  }
+              }
+          }
       }
-    *sp = 0;
-    DebugAdd (s);
-    free (s);
-    #endif // DebugShowRenders
+  }
+
+void RenderFillRect (_Rect Rect, int Colour)
+  {
+    int y;
+    //
+    for (y = 0; y < Rect.Height; y++)
+      RenderDrawLine (Colour, Rect.x, Rect.y + y, Rect.x + Rect.Width - 1, Rect.y + y);
+  }
+
+bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Point Dest, int ColTransparent, byte Alpha = 0xFF)   // same size
+  {
+    int x, y;
+    int xd, yd;
+    int Colour, Colour1, Colour2;
+    byte Alpha1;
+    //
+    if (Alpha)   // Does this Bitmap have any influence
+      for (x = 0; x < RecSource.Width; x++)
+        for (y = 0; y < RecSource.Height; y++)
+          {
+            Colour1 = BitmapGetPixel (Bitmap, RecSource.x + x, RecSource.y + y);
+            if (ColTransparent < 0 || ((Colour1 & 0xFFFFFF) != ColTransparent))
+              {
+                xd = x + Dest.x - TargetBitmapScroll.x;
+                yd = y + Dest.y - TargetBitmapScroll.y;
+                Alpha1 = AlphaGet (&Colour1);
+                Colour2 = BitmapGetPixel (TargetBitmap, xd, yd);
+                if (Alpha1)   // does this pixel have any influence
+                  {
+                    Colour = AlphaBlend (Colour1 & 0xFFFFFF, Colour2 & 0xFFFFFF, (int) Alpha1 * (int) Alpha / 0xFF);  //(int)  * (int) Alpha1 / 0xFF); //Alpha
+                    AlphaSet (&Colour, Alpha1); //0xFF - (0xFF - Alpha1) * (0xFF - Alpha2) / 0xFF * Alpha / 0xFF);
+                    BitmapSetPixel (TargetBitmap, xd, yd, Colour);
+                  }
+              }
+          }
+    return true;
+  }
+
+bool RenderBitmapResize (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, int ColTransparent, byte Alpha = 0xFF)   // resizing
+  {
+    _Bitmap *bm1, *bm2;
+    int xs, ys, xd, yd;
+    int a;
+    bool get, put;
+    int pixel;
+    bool Res;
+    //
+    Res = false;
+    bm1 = Bitmap;
+    bm2 = NULL;
+    if (Bitmap)
+      if ((RecDest.Width > 0) && (RecDest.Height > 0))
+        {
+          if (RecSource.Width == RecDest.Width && RecSource.Height == RecDest.Height)   // Same size
+            Res = RenderBitmap (Window, bm1, RecSource, {RecDest.x, RecDest.y}, ColTransparent, Alpha);
+          else   // Bitmap needs resizing
+            {
+              // Generate Scaled Image
+              bm2 = BitmapCreate (Window, RecDest.Width, RecDest.Height);
+              xs = ys = 0;
+              xd = yd = 0;
+              get = put = true;
+              while (true)
+                {
+                  if (get & put)
+                    {
+                      get = false;
+                      pixel = BitmapGetPixel (bm1, RecSource.x + xs, RecSource.y + ys);
+                    }
+                  if (put)
+                    {
+                      put = false;
+                      BitmapSetPixel (bm2, xd, yd, pixel);
+                    }
+                  a = (xs+1) * RecDest.Width - (xd+1) * RecSource.Width;
+                  if (a <= 0)
+                    {
+                      xs++;
+                      get = true;
+                    }
+                  if (a >= 0)
+                    {
+                      xd++;
+                      put = true;
+                    }
+                  if (xs >= RecSource.Width && get)
+                    {
+                      get = put = true;
+                      xs = 0;
+                      xd = 0;
+                      a = (ys+1) * RecDest.Height - (yd+1) * RecSource.Height;
+                      if (a <= 0)
+                        {
+                          ys++;
+                          get = true;
+                        }
+                      if (a >= 0)
+                        {
+                          yd++;
+                          put = true;
+                        }
+                      if (ys >= RecSource.Height && get)
+                        break;
+                    }
+                }
+              // Now put on Target
+              Res = RenderBitmap (Window, bm2, {0, 0, RecDest.Width, RecDest.Height}, {RecDest.x, RecDest.y}, ColTransparent, Alpha);
+            }
+          // Free stuff
+          if (bm2)
+            BitmapDestroy (bm2);
+        }
+    return Res;
   }
 
 
@@ -235,7 +401,7 @@ void RenderTexture_ (_Window *Window, _Texture *Texture, _Rect RecSource, int De
 
 char *TextCallBackCursor;
 _Point CursorLocation;
-char *TextCallBackSelection [2];
+char *TextCallBackSelected [2];
 _Bitmap *TextCallBackBitmap;
 
 int GetBitmapIndex (char Ch)
@@ -247,10 +413,10 @@ int GetBitmapIndex (char Ch)
     return -1;
   }
 
-bool RenderBitmapTransparentTL (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest)
+bool RenderBitmapTransparentTL (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, byte Alpha = 0xFF)
   {
     if (Bitmap)
-      return RenderBitmap (Window, Bitmap, RecSource, RecDest, BitmapGetPixel (Bitmap, RecSource.x, RecSource.y));
+      return RenderBitmapResize (Window, Bitmap, RecSource, RecDest, BitmapGetPixel (Bitmap, RecSource.x, RecSource.y) & 0xFFFFFF, Alpha);
     return false;
   }
 
@@ -277,16 +443,14 @@ int DrawTextBitmap (_Window *Window, int Index, int x, int y, int FontHeight)
     return Res;
   }
 
-int ColourTable [8] = {cBlack, cRed, cGreen, cRed|cGreen, cBlue, cBlue|cRed, cBlue|cGreen, cWhite};
+//int ColourTable [8] = {cBlack, cRed, cGreen, cRed|cGreen, cBlue, cBlue|cRed, cBlue|cGreen, cWhite};
+int ColourTable [] = {cBlack, cRedDark, cGreenDark, cRedDark|cGreenDark, cBlueDark, cBlueDark|cRedDark, cBlueDark|cGreenDark, cWhite, cGray, cGrayDark};
 
 bool LabelEditTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *Posn, _Point *Size)
   {
     int w;
     int bi;
     int bsz;
-    static bool Selected = false;
-    static int ColBG;
-    static byte Style;
     bool Selected_;
     char c;
     //
@@ -295,75 +459,68 @@ bool LabelEditTextCallBack (_Window *Window, char **Text, _Font *Font, _Point *P
       if (*Text == TextCallBackCursor)
         {
           w = Max (((Font->YAdvance + 7) / 15) * 2, 2);
-          RenderFillRect (Window, {Posn->x - w / 2, Posn->y, w, Font->YAdvance}, Font->Colour);
+          RenderFillRect ({Posn->x - w / 2, Posn->y, w, Font->YAdvance}, Font->Colour);
           CursorLocation = *Posn;
         }
-    // Bitmap / Bold / Italic / Underline ...
-    while (true)
-      {
-        if (**Text == '\e')   // escape => draw Bitmap
-          {
-            (*Text)++;
-            c = **Text;
-            (*Text)++;
-            bi = GetBitmapIndex (c);
-            if (bi >= 0)
-              {
-                if (Window && Posn)
-                  Posn->x += DrawTextBitmap (Window, bi, Posn->x, Posn->y, Font->YAdvance);
-                else if (Size)
-                  {
-                    bsz = DrawTextBitmap (0, bi, 0, 0, 0);
-                    Size->x += bsz;
-                    Size->y = Max (Size->y, bsz);
-                  }
-              }
-          }
-        else if (**Text == '\a')   // ^G => Alter Text: Change Colour, Bold, Italic, Underline ...
-          {
-            (*Text)++;
-            c = UpCase (**Text);
-            (*Text)++;
-            if (c >= '0' && c <= '7')   // Change colour
-              Font->Colour ^= ColourTable [c - '0'];
-            else if (c == 'B')
-              Font->Style ^= fsBold;
-            else if (c == 'I')
-              Font->Style ^= fsItalic;
-            else if (c == 'U')
-              Font->Style ^= fsUnderline;
-          }
-        else
-          break;
-      }
     // Selection?
     if (Window && Posn)
       {
-        if (TextCallBackSelection [0] == nullptr)
+        if (TextCallBackSelected [0] == nullptr)
           Selected_ = false;
         else
-          if (TextCallBackSelection [0] < TextCallBackSelection [1])
-            Selected_ = (*Text >= TextCallBackSelection [0] && *Text < TextCallBackSelection [1]);
+          if (TextCallBackSelected [0] < TextCallBackSelected [1])
+            Selected_ = (*Text >= TextCallBackSelected [0] && *Text < TextCallBackSelected [1]);
           else
-            Selected_ = (*Text >= TextCallBackSelection [1] && *Text < TextCallBackSelection [0]);
+            Selected_ = (*Text >= TextCallBackSelected [1] && *Text < TextCallBackSelected [0]);
         if (Selected_)
-          {
-            if (!Selected)
-              {
-                ColBG = Font->ColourBG;
-                Style = Font->Style;
-              }
-            Font->ColourBG = cSelected;
-            Font->Style |= fsFillBG;
-          }
-        else if (Selected)
-          {
-            Font->ColourBG = ColBG;
-            Font->Style = Style;
-          }
-        Selected = Selected_;
+          Font->ColourBG = cSelected;
+        else
+          Font->ColourBG = -1;
       }
-    return true;
+    // Bitmap command
+    if (**Text == '\e')   // escape => draw Bitmap
+      {
+        (*Text)++;
+        c = **Text;
+        (*Text)++;
+        bi = GetBitmapIndex (c);
+        if (bi >= 0)
+          {
+            if (Window && Posn)
+              Posn->x += DrawTextBitmap (Window, bi, Posn->x, Posn->y, Font->YAdvance);
+            else if (Size)
+              {
+                bsz = DrawTextBitmap (0, bi, 0, 0, 0);
+                Size->x += bsz;
+                Size->y = Max (Size->y, bsz);
+              }
+          }
+        return true;
+      }
+    // Font / Colour altering command
+    if (**Text == '\a')   // ^G => Alter Text: Change Colour, Bold, Italic, Underline ...
+      {
+        (*Text)++;
+        c = UpCase (**Text);
+        (*Text)++;
+        if (c >= '0' && c <= '9')   // Change colour
+          Font->Colour = ColourTable [c - '0'];  //was ^=
+        else if (c == 'B')
+          Font->Style ^= fsBold;
+        else if (c == 'I')
+          Font->Style ^= fsItalic;
+        else if (c == 'U')
+          Font->Style ^= fsUnderline;
+        else if (c == 'O')
+          Font->Style ^= fsOutline;
+        return true;
+      }
+    if (**Text == '\v')   // split command
+      {
+        (*Text)++;
+        return true;
+      }
+    return false;
   }
 
 
@@ -393,7 +550,7 @@ void _Form::Clear (void)
     //
     Title = NULL;
     StrAssignCopy (&Title, Container->TextGet ());
-    KeyFocus = NULL;
+    Focused = NULL;
     delete Container;
     Container = NULL;
     CreateContainer (Title);
@@ -403,22 +560,25 @@ void _Form::Clear (void)
 _Form::_Form (char *Title, _Rect Pos, byte WindowAttributes_)  // : _List (&FormList)
   {
     DebugAddS ("Creating Form ", Title); //####
-    KeyPress = 0;   // Soft Keyboard input
+    KeySeries = NULL;   // Soft Keyboard / Macro input
     EventPreview = NULL;
     Alpha = 0xFF;
     if (WindowCount++ == 0)
       {
         WidgetsInit ();
         TextCallBack = &LabelEditTextCallBack;
-        GetCurrentPath (&HomePath);
+        StrAssign (&FontFileDefault, ResourcePathAdd ("ARI.ttf"));
       }
     Container = NULL;
-    KeyFocus = NULL;
+    Focused = NULL;
     Window = WindowCreate (Title, Pos.x, Pos.y, Pos.Width, Pos.Height, WindowAttributes_);
     CreateContainer (Title);
     WindowAttributes = WindowAttributes_;
-    WindowTexture = NULL;
+    Image = NULL; //BitmapCreate (Window, Pos.Width, Pos.Height);
+    EventMouseLock = NULL;
     EventLock = NULL;
+    RedrawZone [0] = {IntMax, IntMax};
+    RedrawZone [1] = {-1, -1};
     ListAdd (this, &FormList);
     DieFlag = false;
     FloatError = 0.0001;   // Accuracy on sqrt/trig functions
@@ -429,9 +589,12 @@ _Form::~_Form (void)
     char s [64], *sp;
     //
     DebugAddS ("Deleting Form ", Container->TextGet ()); //####
+    Focused = NULL;
+    EventMouseLock = NULL;
+    EventLock = NULL;
     delete Container;
-    if (WindowTexture)
-      TextureDestroy (Window, WindowTexture);
+    if (Image)
+      BitmapDestroy (Image);
     WindowDestroy (Window);
     ListRemove (this, &FormList);   // Remove this from FormList
     if (--WindowCount == 0)
@@ -446,8 +609,32 @@ _Form::~_Form (void)
         StrCat (&sp, " Deleted");
         *sp = 0;
         DebugAdd (s);
-        free (HomePath);
       }
+    MouseKeys = 0x0000;
+  }
+
+inline void ZoneUp (int &x, int Val)
+  {
+    if (Val > x)
+      x = Val;
+  }
+
+inline void ZoneDown (int &x, int Val)
+  {
+    if (Val < x)
+      x = Val;
+  }
+
+void _Form::RedrawZoneAdd (_Container *Container, _Point Offset)
+  {
+    int x_, y_;
+    //
+    x_ = Container->Rect.x + Offset.x;
+    y_ = Container->Rect.y + Offset.y;
+    ZoneDown (RedrawZone [0].x, x_);
+    ZoneDown (RedrawZone [0].y, y_);
+    ZoneUp   (RedrawZone [1].x, x_ + Container->Rect.Width - 1);
+    ZoneUp   (RedrawZone [1].y, y_ + Container->Rect.Height - 1);
   }
 
 void _Form::Die (void)
@@ -461,10 +648,10 @@ bool ProcessEvent (void)   // Looks for and processes events for all Forms. Retu
   {
     bool Busy;
     _Form *f;
-    static word MouseKeys = 0;
     _Event Event;
     //
     Busy = false;
+    memset (&Event, 0, sizeof (Event));
     // Look for internal scheduled events
     f = FormList;
     while (f)
@@ -472,13 +659,12 @@ bool ProcessEvent (void)   // Looks for and processes events for all Forms. Retu
         if (f->DieFlag)
           {
             delete f;
-            return true;
+            return false;
           }
-        if (f->KeyPress)
+        if (f->KeySeries && *f->KeySeries)
           {
             Event.Type = etKeyDown;
-            Event.Key = f->KeyPress;
-            f->KeyPress = 0;
+            Event.Key = *f->KeySeries++;
             break;
           }
         f = (_Form *) f->Next;
@@ -501,8 +687,8 @@ bool ProcessEvent (void)   // Looks for and processes events for all Forms. Retu
     if (f)
       {
         Busy = true;
-        if (Event.Key > 0 && Event.Key <= 16)
-          if (Event.Type == etMouseDown || Event.Type == etMouseUp)
+        if (Event.Type == etMouseDown || Event.Type == etMouseUp)   // Update Mouse Keys
+          if (Event.Key > 0 && Event.Key <= 16)
             {
               if (Event.Key != KeyMouseWheelUp && Event.Key != KeyMouseWheelDown)
                 if (Event.Type == etMouseDown)
@@ -527,13 +713,12 @@ bool ProcessEvent (void)   // Looks for and processes events for all Forms. Retu
           {
             if (f->Container->Resize (Event.X, Event.Y))
               {
-                TextureDestroy (f->Window, f->WindowTexture);
-                f->WindowTexture = NULL;
+                BitmapDestroy (f->Image);
+                f->Image = NULL;
               }
           }
         else if (Event.Type == etWindowClose)
           {
-            DebugAddS ("Event: Window Delete ", f->Container->TextGet ()); //####
             if (f == FormList)   // First window
               while (FormList)   // Remove all windows
                 delete (FormList);
@@ -548,18 +733,29 @@ bool ProcessEvent (void)   // Looks for and processes events for all Forms. Retu
               f->Container->ProcessEvent (&Event, {0, 0});   // Give event to all components
             while (Event.Type == etNext);
           }
+        if (Event.Type == etMouseUp)   // Release the Mouse Lock on Mouse Up
+          f->EventMouseLock = NULL;
       }
     return Busy;
+  }
+
+_Rect MakeRect (_Point p1, _Point p2)
+  {
+    _Rect Res;
+    //
+    Res.x = Min (p1.x, p2.x);
+    Res.y = Min (p1.y, p2.y);
+    Res.Width = Abs (p1.x - p2.x) + 1;
+    Res.Height = Abs (p1.y - p2.y) + 1;
+    return Res;
   }
 
 bool FormsUpdate (void)   // Looks for events, processes everything, returns true for close
   {
     _Form *f;
-    bool RenderAll;
+    _Rect RecUpdate;
     //
-    while (ProcessEvent ())
-      ;
-    //
+    do {} while (ProcessEvent ());
     // Perform Scheduled stuff
     f = FormList;
     while (f)
@@ -569,29 +765,24 @@ bool FormsUpdate (void)   // Looks for events, processes everything, returns tru
         if (f->ReRender)
           {
             f->ReRender = false;
-            RenderAll = false;
-            if (f->Container->Texture)
+            if (f->Container->Image)
               {
-                #ifdef DebugShowRenders
-                DebugAdd ("Page Update:");
-                #endif // DebugShowRenders
-                #define DoubleBuffer
-                #ifdef DoubleBuffer
-                if (f->WindowTexture == NULL)
-                  {
-                    f->WindowTexture = TextureCreate (f->Window, f->Container->Rect.Width, f->Container->Rect.Height);
-                    RenderAll = true;
-                  }
-                f->Container->RenderTarget_ (f->WindowTexture, {0, 0}, cBlack, f->Container->Rect);
-                f->Container->Render1 (RenderAll, 0, 0, 0xFF);
-                f->Container->RenderTarget_ (NULL, {0, 0}, cBlack, f->Container->Rect);
-                f->Container->Render2 (0, 0);
-                #else
-                f->Container->RenderTarget_ (f->WindowTexture, {0, 0}, cBlack, {0, 0, f->Container->Rect.Width, f->Container->Rect.Height});
-                f->Container->Render1 (RenderAll, 0, 0, 0xFF);
-                #endif // DoubleBuffer
+                if (f->Image == NULL)
+                  f->Image = BitmapCreate (f->Window, f->Container->Rect.Width, f->Container->Rect.Height);
+                TargetBitmap = f->Image;
+                TargetBitmapSize = {f->Container->Rect.Width, f->Container->Rect.Height};
+                f->Container->RenderContainers (false, {0, 0}, 0xFF);
+                RecUpdate = MakeRect (f->RedrawZone [0], f->RedrawZone [1]);
+                //RenderPresent (f->Window, f->Image, {0, 0, f->Container->Rect.Width, f->Container->Rect.Height}, {0, 0}, f->Alpha);
+                ZoneDown (f->RedrawZone [1].x, f->Container->Rect.Width);
+                ZoneDown (f->RedrawZone [1].y, f->Container->Rect.Height);
+                //DebugAdd ("Render Present");
+                //BitmapSave (f->Window, f->Image, "WinRender.bmp");
+                if (f->RedrawZone [1].x >= 0 && f->RedrawZone [1].y >= 0)   // somthing to render
+                  RenderPresent (f->Window, f->Image, RecUpdate, f->RedrawZone [0], f->Alpha);
+                f->RedrawZone [0] = {IntMax, IntMax};
+                f->RedrawZone [1] = {-1, -1};
               }
-            RenderPresent (f->Window, f->Alpha);
           }
         f = f->Next;
       }
@@ -616,7 +807,7 @@ _Container::_Container (_Container *Parent_, _Rect Rect_, char *Text_, int Pagin
     RenderFlags = 0;
     Form = NULL;
     Parent = NULL;
-    Texture = NULL;
+    Image = NULL;
     Colour = -1;   // Transparent
     ColourGrad = -1;
     ColourText = -1;
@@ -639,20 +830,30 @@ _Container::_Container (_Container *Parent_, _Rect Rect_, char *Text_, int Pagin
     RectLock = 0x00;
     if (Parent_)
       {
+        if (Rect_.x < 0)
+          {
+            Rect_.x += Parent_->Rect.Width;
+            RectLock |= rlLeft | rlRight;
+          }
+        if (Rect_.y < 0)
+          {
+            Rect_.y += Parent_->Rect.Height;
+            RectLock |= rlTop | rlBottom;
+          }
+        if (Rect_.x + Rect_.Width > Parent_->Rect.Width)
+          Rect_.Width = 0;
+        if (Rect_.y + Rect_.Height> Parent_->Rect.Height)
+          Rect_.Height = 0;
         if (Rect_.Width <= 0)// || Rect_.x + Rect_.Width > Parent_->Rect.Width)
           {
-            Rect_.Width = Parent_->Rect.Width - Rect_.x;
+            Rect_.Width += Parent_->Rect.Width - Rect_.x;
             RectLock |= rlRight;
           }
         if (Rect_.Height <= 0)// || Rect_.y + Rect_.Height > Parent_->Rect.Height)
           {
-            Rect_.Height = Parent_->Rect.Height - Rect_.y;
+            Rect_.Height += Parent_->Rect.Height - Rect_.y;
             RectLock |= rlBottom;
           }
-        //if (Rect_.x + Rect_.Width == Parent_->Rect.Width)
-        //  RectLock |= rlRight;
-        //if (Rect_.y + Rect_.Height == Parent_->Rect.Height)
-        //  RectLock |= rlBottom;
         Parent = Parent_;
         Form = Parent_->Form;   // Every Container knows the Form
         ListAdd (this, &Parent_->Children);   // Add self to parent's children
@@ -668,11 +869,13 @@ _Container::_Container (_Container *Parent_, _Rect Rect_, char *Text_, int Pagin
 _Container::~_Container (void)
   {
     DelCount++;
-    // Unfocus
+    // Unfocus and unlock
     if (Form)
       {
-        if (Form->KeyFocus == this)
-          Form->KeyFocus = NULL;
+        if (Form->Focused == this)
+          Form->Focused = NULL;
+        if (Form->EventMouseLock == this)
+          Form->EventMouseLock = NULL;
         if (Form->EventLock == this)
           Form->EventLock = NULL;
       }
@@ -694,34 +897,9 @@ _Container::~_Container (void)
     if (Parent)
       Parent->Invalidate (false);
     // Delete Texture (if used)
-    if (Texture)
-      TextureDestroy (Form->Window, Texture);
-    Texture = NULL;
-  }
-
-_Point RenderTargetOffset;
-_Rect RenderTargetClip;
-
-bool _Container::RenderTarget_ (_Texture *Texture, _Point Offset, int Colour, _Rect Clip)
-  {
-    #ifdef DebugShowRenders
-    char s [80], *sp;
-    //
-    sp = s;
-    StrCat (&sp, "  Render Target ");
-    NumToHex (&sp, (long int) Texture, 0);
-    *sp = 0;
-    DebugAdd (s);
-    #endif // DebugShowRenders
-    // Assume writing directly to Window
-    RenderTargetOffset = {0, 0};
-    // Unless writing to the Texture
-    if (Texture == NULL)
-      RenderTargetOffset = Offset;
-    RenderTargetOffset.x -= Scroll.x;
-    RenderTargetOffset.y -= Scroll.y;
-    RenderTargetClip = Clip;
-    return RenderTarget (Form->Window, Texture, Colour, Clip);
+    if (Image)
+      BitmapDestroy (Image);
+    Image = NULL;
   }
 
 bool _Container::Resize (int Width, int Height)
@@ -733,13 +911,19 @@ bool _Container::Resize (int Width, int Height)
     //
     if (Width == Rect.Width && Height == Rect.Height)
       return false;
-    if (Texture)   // Delete Texture (if used)
-      TextureDestroy (Form->Window, Texture);
-    Texture = NULL;
+    //DebugAddP ("Resizing", {Width, Height});//####
+    if (Image)   // Delete Texture (if used)
+      BitmapDestroy (Image);
+    Image = NULL;
     dX = Width - Rect.Width;
     dY = Height- Rect.Height;
     Rect.Width = Width;
     Rect.Height = Height;
+    //Scroll.x = Limit (Scroll.x, 0, SizeVirtual.x - Rect.Width);
+    if (Rect.Width >= SizeVirtual.x)
+      Scroll.x = 0;//SizeVirtual.x - Rect.Width;
+    if (Rect.Height >= SizeVirtual.y)
+      Scroll.y = 0;
     Invalidate (true);   // Redraw
     //
     Child = Children;
@@ -780,38 +964,17 @@ void _Container::TextSet (char *St)   // Set the Container's Text
     Invalidate (true);
   }
 
-//#define DebugShowRendersShowInvalidates
-
-#ifdef DebugShowRendersShowInvalidates
-void DebugInvalidate (_Container *c)
-  {
-    char *s = (char *) malloc (1000);
-    char *p = s;
-    StrCat (&p, "RenderFlags 0x");
-    NumToHex (&p, c->RenderFlags, -2);
-    StrCat (&p, ' ');
-    if (c->Text)
-      StrCat (&p, c->Text);
-    *p = 0;
-    DebugAdd (s);
-    free (s);
-  }
-#endif
-
-void _Container::Invalidate (bool ReDraw)
+void _Container::Invalidate (bool ReDraw, bool ReDrawPart)
   {
     _Container *c;
     //
     // Set Rendering flags as needed
-    if (Texture == NULL)
-      ReDraw = true;
     if (ReDraw)
       RenderFlags |= rRedraw;
-    RenderFlags = (RenderFlags & ~rRedrawPart) | rRender | rInvalid;
-    #ifdef DebugShowRendersShowInvalidates
-    DebugInvalidate (this);
-    #endif
-    c = this; //Parent
+    if (ReDrawPart)
+      RenderFlags |= rRedrawPart;
+    RenderFlags |= rRender | rInvalid;
+    c = this;   // Rerender ancestors until we find a "solid"
     while (true)
       {
         if (c == NULL)
@@ -819,9 +982,6 @@ void _Container::Invalidate (bool ReDraw)
         if (c->Colour >= 0 && c->Alpha == 0xFF)   // c has a solid background
           break;   // so parent needs not be fully rerendered (just the children render bits)
         c->RenderFlags |= rRender;
-        #ifdef DebugShowRendersShowInvalidates
-        DebugInvalidate (c);
-        #endif
         c = c->Parent;
       }
     if (IsVisible ())
@@ -847,12 +1007,20 @@ void _Container::EnabledSet (bool Enabled_)
     if (Enabled_ != Enabled)
       {
         Enabled = Enabled_;
+        if (!Enabled)
+          {
+            if (Form->EventMouseLock == this)
+              Form->EventMouseLock = NULL;
+            if (Form->EventLock == this)
+              Form->EventLock = NULL;
+          }
         InvalidateAll (true);
       }
   }
 
-void _Container::Render1 (bool RenderThis, int DestX, int DestY, byte AlphaOffset)
+void _Container::RenderContainers (bool RenderThis, _Point Dest, byte AlphaOffset)
   {
+    _Point Dest_;
     _Rect RecSource;
     _Rect RecSource_;
     _Container *Child;
@@ -864,8 +1032,8 @@ void _Container::Render1 (bool RenderThis, int DestX, int DestY, byte AlphaOffse
         RecSource.y = 0;
         RecSource.Width = Rect.Width - Shift.x - Clip.x;
         RecSource.Height = Rect.Height - Shift.y - Clip.y;
-        DestX += Rect.x + Shift.x;
-        DestY += Rect.y + Shift.y;
+        Dest_.x = Dest.x + Rect.x + Shift.x;
+        Dest_.y = Dest.y + Rect.y + Shift.y;
         // Adjust Alpha
         AlphaOffset = (AlphaOffset * Alpha) / 0xFF;
         if (RenderFlags & rRender)
@@ -874,12 +1042,13 @@ void _Container::Render1 (bool RenderThis, int DestX, int DestY, byte AlphaOffse
           {
             if (RenderThis)
               {
-                RenderTexture_ (Form->Window, Texture, RecSource, DestX, DestY, AlphaOffset, Text);
+                Form->RedrawZoneAdd (this, Dest);//{Dest.x, Dest.y, Rect.Width, Rect.Height});
+                RenderBitmap (Form->Window, Image, RecSource, Dest_, -1, AlphaOffset);
                 Child = Children;
                 while (Child)
                   {
                     //if (Child->Rect.x < Rect.Width && Child->Rect.y < Rect.Height)
-                      Child->Render1 (true, DestX, DestY, AlphaOffset);
+                      Child->RenderContainers (true, {Dest.x + Rect.x, Dest.y + Rect.y}, AlphaOffset);
                     Child = Child->Next;
                   }
               }
@@ -893,7 +1062,8 @@ void _Container::Render1 (bool RenderThis, int DestX, int DestY, byte AlphaOffse
                       if (((Child->RenderFlags & rRender) && Child->Visible && Child->Colour < 0) || Child->RenderFlags & rClear)// && Child->Colour < 0))// || !Child->Visible)
                         {
                           RecSource_ = {RecSource.x + Child->Rect.x, RecSource.y + Child->Rect.y, Child->Rect.Width, Child->Rect.Height};
-                          RenderTexture_ (Form->Window, Texture, RecSource_, DestX + Child->Rect.x, DestY + Child->Rect.y, Child->Alpha, Text);
+                          RenderBitmap (Form->Window, Image, RecSource_, {Dest_.x + Child->Rect.x, Dest_.y + Child->Rect.y}, -1, Child->Alpha);
+                          Form->RedrawZoneAdd (Child, {RecSource.x, RecSource.y});//RecSource_);
                           Child->RenderFlags &= ~rClear;
                         }
                     Child = Child->Next;
@@ -903,39 +1073,13 @@ void _Container::Render1 (bool RenderThis, int DestX, int DestY, byte AlphaOffse
                 while (Child)
                   {
                     //if (Child->Rect.x < Rect.Width && Child->Rect.y < Rect.Height)
-                      Child->Render1 (RenderThis, DestX, DestY, AlphaOffset);
+                      Child->RenderContainers (RenderThis, Dest_, AlphaOffset);
                     Child = Child->Next;
                   }
               }
           }
       }
     RenderFlags &= ~(rRender | rClear);
-  }
-
-void _Container::Render2 (int DestX, int DestY)
-  {
-    _Rect Rec;
-    _Container *Child;
-    //
-    if (Rect.Width > 0 && Rect.Height > 0)
-      {
-        DestX += Rect.x;
-        DestY += Rect.y;
-        Rec = {DestX, DestY, Rect.Width, Rect.Height};
-        if (RenderFlags & rInvalid)
-          RenderTexture_ (Form->Window, Form->WindowTexture, Rec, DestX, DestY, 0xFF, Text);
-        else
-          {
-            Child = Children;
-            while (Child)
-              {
-                //if (Child->Rect.x < Rect.Width && Child->Rect.y < Rect.Height)
-                  Child->Render2 (DestX, DestY);
-                Child = Child->Next;
-              }
-          }
-        RenderFlags &= ~rInvalid;
-      }
   }
 
 void _Container::Die (void)
@@ -945,64 +1089,42 @@ void _Container::Die (void)
 
 void _Container::DrawBackground (_Rect Rect)
   {
-    RenderTargetOffset.x += Scroll.x;
-    RenderTargetOffset.y += Scroll.y;
     if (Colour >= 0)   // Colour defined
       if (ColourGrad < 0)   // Solid Colour
         DrawRectangle (Rect, -1, -1, Colour);
       else
         FillGradient (Rect, Colour, ColourGrad);
     else   // no colour defined. Transparent
-      if (Texture)   // no rendering so no background
-        RenderFillTransparent (Form->Window);
-    RenderTargetOffset.x -= Scroll.x;
-    RenderTargetOffset.y -= Scroll.y;
+      BitmapClear (Image);
   }
 
 void _Container::Draw (bool Force, _Point Offset)
   {
     _Container *Child;
+    _Font *Font_;
     //
     // Is this even visible
     if (IsVisible () && Rect.Width > 0 && Rect.Height > 0)
       {
-        // Create the Texture if absent
-        if (Texture == NULL)
-          Texture = TextureCreate (Form->Window, Rect.Width, Rect.Height);
-        if (RenderFlags & (rRedraw) || Force)
+        if ((RenderFlags & (rRedraw | rRedrawPart)) || Force)
           {
-            //DebugAddS ("Draw ", Text);//####
-            RenderTarget_ (Texture, Offset, ColourFind (), {Offset.x, Offset.y, Rect.Width, Rect.Height});
+            //DebugAddS ("Draw Text", Text);//####
+            //DebugAddR ("Draw Rect", Rect);//####
+            if (Image == NULL)
+              Image = BitmapCreate (Form->Window, Rect.Width, Rect.Height);
+            TargetBitmap = Image;
+            TargetBitmapSize = {Rect.Width, Rect.Height};
             // Draw the background
-            if (~RenderFlags & rRedrawPart)
+            if (RenderFlags & rRedraw)
               DrawBackground ({0, 0, Rect.Width, Rect.Height});
             // Draw stuff specific to this type of Container
+            TargetBitmapScroll = Scroll;
+            Font_ = FontFind ();
+            if (Font_)
+              Font_->Colour = -1; //ColourTextFind ();
             DrawCustom ();
+            TargetBitmapScroll = {0, 0};
             ScrollRegionBarsDraw ();
-            if (Texture == NULL)   // no texture ...
-              {
-                Force = true;   // ... so impose redraw on children
-                RenderFlags &= ~rRender;   // ... and nothing to render
-              }
-          }
-        else if (Texture == NULL)   // no texture so set children background if rerendering
-          {
-            Child = Children;
-            while (Child)
-              {
-                if (Child->RenderFlags & rRender)   // Child needs redrawing
-                  {
-                    //Child->RenderFlags |= rRedraw;   // so schedule redraw
-                    Child->RenderFlags = (Child->RenderFlags &~rRender) | rRedraw;   // so schedule redraw, forget rerender
-                    if (~Child->RenderFlags & rRedrawPart)
-                      if (Child->Colour < 0 || !Child->Visible)   // and prepare child background if it is transparent
-                        {
-                          Child->RenderTarget_ (Texture, Offset, ColourFind (), {Child->Rect.x + Offset.x, Child->Rect.y + Offset.y, Child->Rect.Width, Child->Rect.Height});
-                          DrawBackground (Child->Rect);
-                        }
-                  }
-                Child = Child->Next;
-              }
           }
         // Draw Children
         Child = Children;
@@ -1022,33 +1144,29 @@ void _Container::DrawCustom (void)
       DrawRectangle ({0, 0, Rect.Width, Rect.Height}, cRed, cRed, -1);
   }
 
-bool _Container::FontSet (const char *FontFile, int Size, byte Style)
+bool _Container::FontSet (char *FontFile, int Size, byte Style)
   {
     _Font *Font_;
     char *s;
     //
     s = NULL;
     Font_ = NULL;
-    if (FontFile && *FontFile)   // Open New Font
+    if (FontFile && *FontFile)   // Font specified
       {
-        s = AddHomePath (FontFile);
-        Font_ = FontCreate (s, Size, Style, -1);
+        s = ResourcePathAdd (FontFile);
+        Font_ = FontCreate (s, Size, Style);
         if (Font_)
           if (FontFileDefault == NULL)
-            StrAssignCopy (&FontFileDefault, FontFile);   // Set Default Font
+            StrAssignCopy (&FontFileDefault, s);   // Set Default Font
       }
-    else if (FontFileDefault && *FontFileDefault)
-      {
-        s = AddHomePath (FontFileDefault);
-        Font_ = FontCreate (s, Size, Style, -1);
-      }
+    if (!Font_)   // it failed, try default
+      Font_ = FontCreate (FontFileDefault, Size, Style);
     if (Font_)   // it worked
       {
         if (Font)   // Free old Font
           FontDestroy (Font);
         Font = Font_;
       }
-    //Invalidate (true);
     if (!Font)
       DebugAddS ("FontSet FAIL: ", FontFile);
     if (s)
@@ -1056,7 +1174,7 @@ bool _Container::FontSet (const char *FontFile, int Size, byte Style)
     return Font != NULL;
   }
 
-bool _Container::CheckFocus (_Event *Event, _Point Offset)   // Take or lose keyboard Focus
+bool _Container::FocusCheck (_Event *Event, _Point Offset)   // Take or lose keyboard Focus
   {
     _Container *c;
     bool Res;
@@ -1066,19 +1184,19 @@ bool _Container::CheckFocus (_Event *Event, _Point Offset)   // Take or lose key
     if (Event->Type == etNext)
       {
         Event->Type = etNone;
-        Form->KeyFocus = this;
+        Form->Focused = this;
         Invalidate (true);
         Res = true;
       }
-    if (!Form->EventLock)
+    if (!Form->EventMouseLock)
       {
         // Take focus if clicked on
         if (IsEventMine (Event, Offset))
           if (Event->Type == etMouseDown && Event->Key == KeyMouseLeft)
-            if (Form->KeyFocus != this)
+            if (Form->Focused != this)
               {
-                c = Form->KeyFocus;
-                Form->KeyFocus = this;
+                c = Form->Focused;
+                Form->Focused = this;
                 if (c)
                   c->Invalidate (true);
                 Invalidate (true);
@@ -1086,15 +1204,27 @@ bool _Container::CheckFocus (_Event *Event, _Point Offset)   // Take or lose key
               }
         // Lose focus if tab pressed
         if (Event->Type == etKeyDown)
-          if (Form->KeyFocus == this)
+          if (Form->Focused == this)
             if (Event->Key == tab)
               {
                 Event->Type = etNext;
-                Form->KeyFocus = NULL;
+                Form->Focused = NULL;
                 Invalidate (true);
+                Res = true;
               }
       }
     return Res;
+  }
+
+void _Container::FocusSet (void)   // Give Focus to a _Container
+  {
+    _Container *c;
+    //
+    c = Form->Focused;
+    Form->Focused = this;
+    if (c)
+      c->Invalidate (true);
+    Invalidate (true);
   }
 
 void DebugShowMouseEvent (_Event *Event, _Container *Container)
@@ -1109,7 +1239,7 @@ void DebugShowMouseEvent (_Event *Event, _Container *Container)
         StrCat (&ps, " at ");
         PointToStr (&ps, {Event->X, Event->Y});
         StrCat (&ps, " on thing at ");
-        RectToStr (&ps, &Container->Rect);
+        RectToStr (&ps, Container->Rect);
         *ps = 0;
         DebugAdd (s);
       }
@@ -1121,25 +1251,9 @@ bool _Container::ProcessEvent (_Event *Event, _Point Offset)
     _Point ScrollOld;
     bool Res;
     //
+    Res = false;
     if (!IsVisible () || !Enabled)
       return false;
-    /*if (Event->Type != etMouseMove)   //####
-      {
-        char s [120], *ps;
-        ps = s;
-        StrCat (&ps, "Event ");
-        NumToStr (&ps, Event->Type);
-        StrCat (&ps, " - ");
-        RectToStr (&ps, &Rect);
-        StrCat (&ps, ": ");
-        StrCat_ (&ps, Text, 80);
-        *ps = 0;
-        DebugAdd (s);
-      }*/
-    //if (EventPreview)
-    //  if (EventPreview (this, Event, OffsetX, OffsetY))
-    //    return true;
-    //DebugShowMouseEvent (Event, this);
     // Check the Children
     Child = Children;
     while (Child)
@@ -1158,10 +1272,10 @@ bool _Container::ProcessEvent (_Event *Event, _Point Offset)
     if (Scroll.y < 0)
       Scroll.y = 0;
     if (Scroll.x != ScrollOld.x || Scroll.y != ScrollOld.y)
-      {
-        Invalidate (true);
-        RenderFlags &= ~rRedrawPart;
-      }
+      Invalidate (true);
+    if (Res)
+      if (Event->Type == etMouseDown)   // Lock to this Container on Mouse Down
+        Form->EventMouseLock = this;
     return Res;
   }
 
@@ -1246,7 +1360,7 @@ void _Container::PollCustom (void)
           if (PagingTransitionState == ptsIdle)
             {
               if ((int) (Tick - PagingTick) >= 0)   // Time to change
-                if (PagingTransitionTime == 0 || Texture == NULL)   // no transitions, just flip over
+                if (PagingTransitionTime == 0)   // no transitions, just flip over
                   {
                     PagingChild->VisibleSet (false);
                     PagingChildNew->VisibleSet (true);
@@ -1323,21 +1437,18 @@ bool _Container::IsEventWithin (_Event *Event, _Point Offset)
 
 bool _Container::IsEventMine (_Event *Event, _Point Offset)
   {
-    bool Res;
-    //
-    if (Form->EventLock)
-      return Form->EventLock == this;
-    Res = false;
-    if (IsEventMouse (Event) && IsEventWithin (Event, Offset))
-      Res = true;
-    else if (Event->Type == etKeyDown || Event->Type == etKeyUp)
+    if (IsVisible () && IsEnabled ())   // might be redundant
       {
-        if (Form->KeyFocus == this)
-          Res = true;
+        if (Event->Type == etKeyDown || Event->Type == etKeyUp)
+          return Form->Focused == this;
+        if (Form->EventLock)
+          return Form->EventLock == this;
+        if (Form->EventMouseLock)
+          return Form->EventMouseLock == this;
+        if ((Event->Type >= etMouseDown && Event->Type <= etMouseMove) && IsEventWithin (Event, Offset))
+          return true;
       }
-    //else   // non mouse kbd events
-    //  Res = true;
-    return Res;
+    return false;
   }
 
 int _Container::ColourFind (void)
@@ -1408,77 +1519,146 @@ _Rect AddMargin (_Rect Rect, _Point Margin)
     return {Rect.x + Margin.x, Rect.y + Margin.y, Rect.Width - 2 * Margin.x, Rect.Height - 2 * Margin.y};
   }
 
-_Point _Container::TextMeasure (_Font *Font_, char *Text)
+_Point _Container::TextMeasure (char *Text)
   {
     _Point Size;
-    byte Style_;
-    int cFG, cBG;
+    _Font *Font_, Font__;
     //
-    if (Font_ == NULL)
-      Font_ = FontFind ();
+    Font_ = FontFind ();
     if (Font_ == NULL)
       Size = {0, 0};
     else
       {
+        Font__ = *Font_;
         TextCallBackBitmap = BitmapFind ();
-        Style_ = Font_->Style;
-        cFG = Font_->Colour;
-        cBG = Font_->ColourBG;
-        Size = TextSize (Font_, Text);
-        Font_->Style = Style_;
-        Font_->Colour = cFG;
-        Font_->ColourBG = cBG;
+        Size = TextSize (&Font__, Text);
       }
     return Size;
   }
 
-void _Container::TextOutAligned (_Font *Font_, _Rect Rect, char *Text, _Align Align, _Align AlignVert)
+extern int puts (char *St);
+
+void _Container::TextOutAligned (_Rect Rect_, char *Text, _Align Align, _Align AlignVert)
   {
+    static int ColourTextOld = -1;
+    int Col;
+    _Font *Font_;
     _Point Size;
     int dX, dY;
-    int cBG;
+    char *Split;
     //
     if (Text == NULL)
       return;
-    if (Font_ == NULL)
-      Font_ = FontFind ();
+    Font_ = FontFind ();
     if (Font_ == NULL)
       return;
+    // Change colour if requested, otherwise keep current colour
+    Col = ColourTextFind ();
+    if (Col != ColourTextOld || Font_->Colour < 0)
+      Font_->Colour = Col;
+    ColourTextOld = Col;
     TextCallBackBitmap = BitmapFind ();
-    if (Font_->Colour < 0)
-      Font_->Colour = ColourTextFind ();
     if (!IsEnabled ())
+      Font_->Colour = ColourAverage (Font_->Colour, ColourFind ());
+    Split = StrPos (Text, '\v');   // vertical tab => Split line, left & right justified
+    if (Split)
       {
-        Font_->Colour = ColourAverage (Font_->Colour, ColourFind ());
-        Font_->Style &= ~(fsShadow | fsOutline);
+        *Split = 0;
+        TextOutAligned ({Rect_.x, Rect_.y, Rect_.Width, Rect_.Height}, Text, aLeft, AlignVert);
+        TextOutAligned ({Rect_.x, Rect_.y, Rect_.Width, Rect_.Height}, Split + 1, aRight, AlignVert);
+        *Split = '\v';
       }
-    Size = TextMeasure (Font_, Text);
-    if (Align != aLeft)
-      {
-        dX = Rect.Width - Size.x;
-        if (Align == aRight)
-          Rect.x += dX;
-        else if (Align == aCenter)
-          Rect.x += dX / 2;
-      }
-    dY = Rect.Height - Font_->YAdvance;
-    if (AlignVert == aCenter)
-      Rect.y += dY / 2;
-    else if (AlignVert == aRight)
-      Rect.y += dY;
-    cBG = Font_->ColourBG;
-    if (cBG < 0)
-      Font_->ColourBG = ColourFind ();
-    if (Font_->Style & fsRotate)
-      TextRender (Form->Window, Font_, Text, {Rect.x + RenderTargetOffset.x, Rect.y + Size.x - 1 + RenderTargetOffset.y});
     else
-      TextRender (Form->Window, Font_, Text, {Rect.x + RenderTargetOffset.x, Rect.y + RenderTargetOffset.y});
-    if (cBG < 0)   // restore transparent BG (if it was)
-      Font_->ColourBG = -1;
+      {
+        Size = TextMeasure (Text);
+        if (Align != aLeft)
+          {
+            dX = Rect_.Width - Size.x;
+            if (Align == aRight)
+              Rect_.x += dX;
+            else if (Align == aCenter)
+              Rect_.x += dX / 2;
+          }
+        dY = Rect_.Height - Font_->YAdvance;
+        if (AlignVert == aCenter)
+          Rect_.y += dY / 2;
+        else if (AlignVert == aRight)
+          Rect_.y += dY;
+        if (Font_->Style & fsRotate)
+          TextRender (Form->Window, Font_, Text, {Rect_.x, Rect_.y + Size.x - 1});
+        else if (Rect_.y - Scroll.y < Rect.Height && Rect_.y - Scroll.y + Font_->YAdvance > 0)
+          TextRender (Form->Window, Font_, Text, {Rect_.x, Rect_.y});
+      }
   }
 
 // Word wrap text out.  !Write => measure only
 // PosY is starting & finishing position
+
+int StrBlank (char *St, int Index, int Dir)
+  {
+    char c;
+    //
+    while (true)
+      {
+        if (Index < 0)
+          return -1;
+        c = St [Index];
+        if (c == ' ' || c == '\0')
+          return Index;
+        Index += Dir;
+      }
+  }
+
+void _Container::TextOutAlignedN (_Rect Rect_, char *St, _Align Align, int n)
+  {
+    char *St_;
+    //
+    St_ = StrMake (St, n);
+    TextOutAligned (Rect_, St_, Align, aTop);
+    free (St_);
+    /*
+    char c;
+    //
+    c = St [n];
+    St [n] = 0;  DOESN'T LIKE THIS !!!!!!! %%%%
+    TextOutAligned (Rect_, St, Align, aTop);
+    if (c)
+      St [n] = c;
+    */
+  }
+
+void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, bool Write)
+  {
+    _Font *Font_;
+    int x, a;
+    //
+    if (St == NULL)
+      return;
+    Font_ = FontFind ();
+    while (true)
+      {
+        if (*St == '\0')
+          break;
+        x = TextIndex (Font_, St, Rect_.Width);
+        if (St [x] == ' ' || St [x] == '\n' || St [x] == '\0')
+          a = x;
+        else
+          {
+            a = StrBlank (St, x, -1);
+            if (a < 0)
+              a = StrBlank (St, x, +1);
+          }
+        if (Write)
+          //if ((*PosY - Scroll.y) + Font_->YAdvance >= Rect_.y && (*PosY - Scroll.y) < Rect_.y + Rect_.Height)
+            TextOutAlignedN ({Rect_.x, *PosY, Rect_.Width, 99999}, St, Align, a);
+        if (St [a] == ' ' || St [a] == '\n')
+          a++;
+        St = &St [a];
+        *PosY += Font_->YAdvance;
+      }
+  }
+
+/*
 void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, bool Write)
   {
     int BOL, BOW, EOW, x;
@@ -1505,7 +1685,7 @@ void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, b
               }
             memcpy (StSub, St, EOW);
             StSub [EOW] = 0;//####
-            Size = TextMeasure (Font, &StSub [BOL]);
+            Size = TextMeasure (&StSub [BOL]);
             x = 0;
             if (Size.x > Rect_.Width)   // too wide
               if (BOW == BOL)   // Only 1 word this line?
@@ -1524,11 +1704,11 @@ void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, b
                     if (Split)
                       {
                         *Split = 0;
-                        TextOutAligned (NULL, {Rect_.x, *PosY, Rect_.Width, Size.y}, &StSub [BOL], aLeft, aLeft);
-                        TextOutAligned (NULL, {Rect_.x, *PosY, Rect_.Width, Size.y}, Split + 1, aRight, aLeft);
+                        TextOutAligned ({Rect_.x, *PosY, Rect_.Width, Size.y}, &StSub [BOL], aLeft, aLeft);
+                        TextOutAligned ({Rect_.x, *PosY, Rect_.Width, Size.y}, Split + 1, aRight, aLeft);
                       }
                     else
-                      TextOutAligned (NULL, {Rect_.x, *PosY, Rect_.Width, Size.y}, &StSub [BOL], Align, aLeft);
+                      TextOutAligned ({Rect_.x, *PosY, Rect_.Width, Size.y}, &StSub [BOL], Align, aLeft);
                   }
                 if (St [x])   // Step past Break char
                   x++;
@@ -1546,77 +1726,75 @@ void _Container::TextOutWrap_ (_Rect Rect_, char *St, _Align Align, int *PosY, b
         free (StSub);
       }
   }
+*/
 
 // Text out wrapping at words. Force wrap at \n. Split line full justify at \t
-void _Container::TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert)
+int _Container::TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert)
   {
     _Font *Font_;
     _Point Size;
     int x, y, gapX, gapY;
-    int cFG, cBG;
-    byte Style;
     //
-    Font_ = FontFind ();
-    if (Font_)
-      if (Font_->Style & fsRotate)
-        {
-          Size = TextMeasure (Font_, Text);
-          gapX = (Rect.Width - Size.y);
-          gapY = (Rect.Height - Size.x);
-          x = Rect.x;
-          y = Rect.y;
-          if (Align == aCenter)
-            y += gapY / 2;
-          else if (Align == aLeft)
-            y += gapY;
-          if (AlignVert == aCenter)
-            x += gapX / 2;
-          else if (AlignVert == aRight)
-            x += gapX;
-          TextOutAligned (Font_, {x, y, 0, 0}, Text, aLeft, aLeft);
-          //DrawRectangle ({x, y, Size.y, Size.x}, cRed, cRed, -1); //####
-        }
-      else
-        {
-          cFG = Font_->Colour;
-          cBG = Font_->ColourBG;
-          Style = Font_->Style;
-          y = Rect.y;
-          if (AlignVert == aLeft)   // Top
-            TextOutWrap_ (Rect, Text, Align, &y, true);
-          else
-            {
-              y = 0;
-              TextOutWrap_ (Rect, Text, Align, &y, false);
-              if (AlignVert == aCenter)
-                y = Rect.y + (Rect.Height - y) / 2;
-              else   // Bottom
-                y = Rect.y + Rect.Height - y;
-              TextOutWrap_ (Rect, Text, Align, &y, true);
-            }
-          Font_->Colour = cFG;
-          Font_->ColourBG = cBG;
-          Font_->Style = Style;
-        }
-  }
-
-void _Container::TextOutWrapInverse (_Rect Rect, char *St, _Align Align, _Point Margin)
-  {
-    int cFG, cBG, cText;
-    _Font *Font_;
-    //
-    cText = ColourTextFind ();
-    DrawRectangle ({0, Rect.y, Rect.Width, Rect.Height}, -1, -1, cText);//ColFont cSelected
     Font_ = FontFind ();
     if (Font_)
       {
-        cFG = Font_->Colour;
-        cBG = Font_->ColourBG;
-        Font_->Colour = cText ^ cWhite;//cTextBgnd cTextHighlight
-        Font_->ColourBG = cText;//ColFont cSelected
-        TextOutWrap (AddMargin (Rect, Margin), St, Align, aCenter);
-        Font_->Colour = cFG;
-        Font_->ColourBG = cBG;
+        if (Font_->Style & fsRotate)
+          {
+            Size = TextMeasure (Text);
+            gapX = (Rect.Width - Size.y);
+            gapY = (Rect.Height - Size.x);
+            x = Rect.x;
+            y = Rect.y;
+            if (Align == aCenter)
+              y += gapY / 2;
+            else if (Align == aLeft)
+              y += gapY;
+            if (AlignVert == aCenter)
+              x += gapX / 2;
+            else if (AlignVert == aRight)
+              x += gapX;
+            TextOutAligned ({x, y, 0, 0}, Text, aLeft, aLeft);
+          }
+        else
+          {
+            y = Rect.y;
+            if (AlignVert == aLeft)   // Top
+              TextOutWrap_ (Rect, Text, Align, &y, true);
+            else
+              {
+                y = 0;
+                //Font__ = *Font_;   // save
+                TextOutWrap_ (Rect, Text, Align, &y, false);
+                //*Font_ = Font__;   // restore
+                if (AlignVert == aCenter)
+                  y = Rect.y + (Rect.Height - y) / 2;
+                else   // Bottom
+                  y = Rect.y + Rect.Height - y;
+                TextOutWrap_ (Rect, Text, Align, &y, true);
+              }
+          }
+      }
+    return y;
+  }
+
+void _Container::TextOutInverse (_Rect Rect, char *St, int Margin)
+  {
+    int cText;
+    _Font *Font_;
+    int Colour;
+    _Point Sz;
+    //
+    cText = ColourTextFind ();
+    DrawRectangle ({0, Rect.y, Rect.Width, Rect.Height}, -1, -1, cText);
+    Font_ = FontFind ();
+    if (Font_)
+      {
+        Sz = TextMeasure (St);
+        Colour = Font_->Colour;
+        Font_->Colour = cText ^ cWhite;   // inverted colour
+        TextRender (Form->Window, Font_, St, {Rect.x + Margin, Rect.y + (Rect.Height - Sz.y) / 2});
+        //TextOutAligned (AddMargin (Rect, {Margin, 0}), St, aLeft, aCenter);
+        Font_->Colour = Colour;   // Restore Colour
       }
   }
 
@@ -1624,46 +1802,41 @@ void _Container::DrawLine (int x1, int y1, int x2, int y2, int Colour, int Width
   {
     int i;
     //
-    x1 += RenderTargetOffset.x;
-    y1 += RenderTargetOffset.y;
-    x2 += RenderTargetOffset.x;
-    y2 += RenderTargetOffset.y;
-    if (Colour >= 0)
-      for (i = 0; i < Width; i++)
-        if (i == 0)
-          RenderDrawLine (Form->Window, Colour, x1, y1, x2, y2);
-        else
-          {
-            RenderDrawLine (Form->Window, Colour, x1 + i, y1, x2 + i, y2);
-            RenderDrawLine (Form->Window, Colour, x1 - i, y1, x2 - i, y2);
-            RenderDrawLine (Form->Window, Colour, x1, y1 + i, x2, y2 + i);
-            RenderDrawLine (Form->Window, Colour, x1, y1 - i, x2, y2 - i);
-          }
+    if (Colour >= 0)   // non-transparent
+      {
+        for (i = 0; i < Width; i++)
+          if (i == 0)
+            RenderDrawLine (Colour, x1, y1, x2, y2);
+          else
+            {
+              RenderDrawLine (Colour, x1 + i, y1, x2 + i, y2);
+              RenderDrawLine (Colour, x1 - i, y1, x2 - i, y2);
+              RenderDrawLine (Colour, x1, y1 + i, x2, y2 + i);
+              RenderDrawLine (Colour, x1, y1 - i, x2, y2 - i);
+            }
+      }
   }
 
 void _Container::DrawRectangle (_Rect Rect_, int ColourEdgeTL, int ColourEdgeBR, int ColourFill)
   {
     _Point BR;
     //
-    Rect_.x += RenderTargetOffset.x;
-    Rect_.y += RenderTargetOffset.y;
     if (ColourFill >= 0)
-      RenderFillRect (Form->Window, Rect_, ColourFill);
-    //####
+      RenderFillRect (Rect_, ColourFill);
     BR = BottomRight (&Rect_);
     if (ColourEdgeTL >= 0)
       {
         if (Rect_.Height)
-          RenderDrawLine (Form->Window, ColourEdgeTL, Rect_.x, BR.y, Rect_.x, Rect_.y);
+          RenderDrawLine (ColourEdgeTL, Rect_.x, BR.y, Rect_.x, Rect_.y);
         if (Rect_.Width)
-          RenderDrawLine (Form->Window, ColourEdgeTL, Rect_.x, Rect_.y, BR.x, Rect_.y);
+          RenderDrawLine (ColourEdgeTL, Rect_.x, Rect_.y, BR.x, Rect_.y);
       }
     if (ColourEdgeBR >= 0)
       {
         if (Rect_.Height)
-          RenderDrawLine (Form->Window, ColourEdgeBR, BR.x, Rect_.y, BR.x, BR.y);
+          RenderDrawLine (ColourEdgeBR, BR.x, Rect_.y, BR.x, BR.y);
         if (Rect_.Width)
-          RenderDrawLine (Form->Window, ColourEdgeBR, BR.x, BR.y, Rect_.x, BR.y);
+          RenderDrawLine (ColourEdgeBR, BR.x, BR.y, Rect_.x, BR.y);
       }
   }
 
@@ -1681,7 +1854,11 @@ void _Container::DrawBorder (_Rect Rect, _Border Border, int ColourReference, in
   {
     int ColTL, ColBR;
     _Point p1, p2;
+    _Point tbs;
     //
+    //
+    tbs = TargetBitmapScroll;
+    TargetBitmapScroll = {0};
     ColTL = BorderColourTL (ColourReference);
     ColBR = BorderColourBR (ColourReference);
     if (Border != bNone)
@@ -1714,33 +1891,34 @@ void _Container::DrawBorder (_Rect Rect, _Border Border, int ColourReference, in
               DrawLine (p1.x, p1.y, p1.x, p2.y, ColTL);   // Left
             }
         }
+    TargetBitmapScroll = tbs;
   }
 
 void _Container::DrawBorder (_Border Border, int Indent)
   {
     int Colour;
     //
-    Colour = Parent->ColourFind ();
+    Colour = ColourFind ();
     DrawBorder ({0, 0, Rect.Width, Rect.Height}, Border, Colour, Indent);
   }
 
 void _Container::DrawBezel (int Width)
   {
     int i, c;
+    _Point tbs;
     //
-    RenderTargetOffset.x += Scroll.x;
-    RenderTargetOffset.y += Scroll.y;
+    tbs = TargetBitmapScroll;
+    TargetBitmapScroll = {0, 0};
     for (i = 0; i < Width; i++)
       DrawBorder (bLowered, i);
-    if (Form->KeyFocus == this)
+    if (Form->Focused == this)
       {
         c = ColourAdjust (ColourTextFind (), 150);
         DrawRectangle ({i, i, Rect.Width - i - i, Rect.Height - i - i}, c, c, -1);
         //i++;
         //DrawRectangle ({i, i, Rect.Width - i - i, Rect.Height - i - i}, c, c, -1);
       }
-    RenderTargetOffset.x -= Scroll.x;
-    RenderTargetOffset.y -= Scroll.y;
+    TargetBitmapScroll = tbs;
   }
 
 #define TabCorners 2
@@ -1752,10 +1930,10 @@ void _Container::DrawTab (_Rect Rec, int ColourReference, int ColourBG, bool Sel
     int i;
     //
     BR = BottomRight (&Rec);
+    ColTL = BorderColourTL (ColourReference);
+    ColBR = BorderColourBR (ColourReference);
     if (ButtonStyle == bsNormal)
       {
-        ColTL = BorderColourTL (ColourReference);
-        ColBR = BorderColourBR (ColourReference);
         // Straights
         for (i = 0; i < 2; i++)
           {
@@ -1784,13 +1962,13 @@ void _Container::DrawTab (_Rect Rec, int ColourReference, int ColourBG, bool Sel
       }
     else   // bsFlat OR bsSimple
       {
-        ColTL = ColourAdjust (ColourTextFind (), 140);
+        //ColBR = ColourAdjust (ColourTextFind (), 140);
         if ((ButtonStyle == bsFlat && Rec.x == 0) || (ButtonStyle == bsSimple && Selected))
-          DrawLine (Rec.x, BR.y, Rec.x, Rec.y, ColTL);   // Left
+          DrawLine (Rec.x, BR.y, Rec.x, Rec.y, ColBR);   // Left
         if (ButtonStyle == bsFlat || Selected)
           {
-            DrawLine (Rec.x, Rec.y, BR.x, Rec.y, ColTL);   // Top
-            DrawLine (BR.x, Rec.y, BR.x, BR.y, ColTL);   // Right
+            DrawLine (Rec.x, Rec.y, BR.x, Rec.y, ColBR);   // Top
+            DrawLine (BR.x, Rec.y, BR.x, BR.y, ColBR);   // Right
           }
       }
   }
@@ -1971,6 +2149,27 @@ void _Container::DrawArrow (_Rect Rect_, _Direction Direction)   // Arrow: Direc
       }
   }
 
+void _Container::DrawKnerl (_Rect Rect, bool Vert)
+  {
+    int Col [3];   // ColBG, ColBorder, ColBar
+    int i;
+    //
+    Col [2] = Parent->ColourFind ();
+    Col [0] = ColourAdjust (Col [2], 150);
+    Col [1] = ColourAdjust (Col [2], 60);
+    i = 0;
+    while (true)
+      {
+        if (Vert)
+          DrawLine (Rect.x + i, Rect.y, Rect.x + i, Rect.y + Rect.Height, Col [i % 3], 1);
+        else
+          DrawLine (Rect.x, Rect.y + i, Rect.x + Rect.Width, Rect.y + i, Col [i % 3], 1);
+        i++;
+        if (i >= (Vert ? Rect.Width : Rect.Height))
+          break;
+      }
+  }
+
 void _Container::DrawScrollBar (bool Vert, int Bar1, int Bar2)
   {
     int Col [3];   // ColBG, ColBorder, ColBar
@@ -1992,26 +2191,27 @@ void _Container::DrawScrollBar (bool Vert, int Bar1, int Bar2)
       }
     // knerl
     j = (Bar1 + Bar2) / 2 - 3;
-    for (i = 0; i < 8; i++)
-      if (Vert)
-        DrawLine (Rect.Width - ScrollBarWidth + 3, j + i, Rect.Width - 4, j + i, Col [i % 3], 1);
-      else
-        DrawLine (j + i, Rect.Height - ScrollBarWidth + 3, j + i, Rect.Height - 4, Col [i % 3], 1);
+    if (Bar2 - Bar1 > 8)
+      for (i = 0; i < 8; i++)
+        if (Vert)
+          DrawLine (Rect.Width - ScrollBarWidth + 3, j + i, Rect.Width - 4, j + i, Col [i % 3], 1);
+        else
+          DrawLine (j + i, Rect.Height - ScrollBarWidth + 3, j + i, Rect.Height - 4, Col [i % 3], 1);
     // corner
     DrawRectangle ({Rect.Width - ScrollBarWidth, Rect.Height - ScrollBarWidth, ScrollBarWidth, ScrollBarWidth}, Col [1], Col [1], Col [2]); //ColourFind ());
   }
 
 void _Container::ScrollBarsDraw (byte Bars, _Point Value, _Point Content)
   {
-    int Bar1, Bar2;
+    longint Bar1, Bar2;
     //
-    if (Bars & sbHorz)
+    if ((Bars & sbHorz) && Content.x > 1)
       {
         Bar1 = Value.x * (Rect.Width - 3 * ScrollBarWidth) / (Content.x - 1);
         Bar2 = Bar1 + 2 * ScrollBarWidth - 1;
         DrawScrollBar (false, Bar1, Bar2);
       }
-    if (Bars & sbVert)
+    if ((Bars & sbVert) && Content.y > 1)
       {
         Bar1 = Value.y * (Rect.Height - 3 * ScrollBarWidth) / (Content.y - 1);
         Bar2 = Bar1 + 2 * ScrollBarWidth - 1;
@@ -2031,10 +2231,7 @@ bool _Container::ScrollBarsEvent (_Event *Event, _Point Offset, byte Bars, _Poin
     if (IsEventMine (Event, Offset))
       {
         if ((Drag.x >= 0 || Drag.y >= 0) && Event->MouseKeys == 0)
-          {
-            Drag = {-1, -1};
-            Form->EventLock = NULL;
-          }
+          Drag = {-1, -1};
         ScrollOld = *Scroll;
         if (Bars & sbHorz)   // we will have a horizontal scroll bar
           {
@@ -2052,7 +2249,6 @@ bool _Container::ScrollBarsEvent (_Event *Event, _Point Offset, byte Bars, _Poin
                       Res = true;
                       Drag.x = Event->X;
                       DragVal.x = Scroll->x;
-                      Form->EventLock = this;
                     }
                   else if (Event->Key == KeyMouseWheelDown)
                     Scroll->x ++;
@@ -2073,7 +2269,6 @@ bool _Container::ScrollBarsEvent (_Event *Event, _Point Offset, byte Bars, _Poin
                   Res = true;
                   Drag.y = Event->Y;
                   DragVal.y = Scroll->y;
-                  Form->EventLock = this;
                 }
               else
                 {
@@ -2166,6 +2361,7 @@ void DebugShowScroll (_Container *Container)
 
 bool _Container::ScrollRegionBarsEvent (_Event *Event, _Point Offset)
   {
+    const int MouseWheelDistance = 64;
     static _Point Drag = {-1, -1};
     static _Point DragVal;
     bool Res;
@@ -2176,23 +2372,19 @@ bool _Container::ScrollRegionBarsEvent (_Event *Event, _Point Offset)
     if (IsEventMine (Event, Offset))
       {
         if ((Drag.x >= 0 || Drag.y >= 0) && Event->MouseKeys == 0)
-          {
-            Drag = {-1, -1};
-            Form->EventLock = NULL;
-          }
+          Drag = {-1, -1};
         ScrollOld = Scroll;
         if (SizeVirtual.x > Rect.Width)   // we will have a horizontal scroll bar
           {
             Res = true;
             if (Event->Type == etMouseMove && Event->MouseKeys == Bit [KeyMouseLeft - 1] && Drag.x >= 0)   // Drag with left mouse button
-              Scroll.x = DragVal.x + (Event->X - Drag.x) * SizeVirtual.x / Rect.Width;
+              Scroll.x = DragVal.x + (longint) (Event->X - Drag.x) * (longint) SizeVirtual.x / (longint) Rect.Width;
             else
               if (Event->Y - Offset.y >= Rect.Height - ScrollBarWidth)   // Click is potentially on the hor scroll bar
                 if (Event->Type == etMouseDown && Event->Key == KeyMouseLeft)   // My left click
                   {
                     Drag.x = Event->X;
                     DragVal.x = Scroll.x;
-                    Form->EventLock = this;
                   }
                 else if (Event->Type == etMouseDown && Event->Key == KeyMouseWheelDown)
                   Scroll.x += 16;
@@ -2203,27 +2395,27 @@ bool _Container::ScrollRegionBarsEvent (_Event *Event, _Point Offset)
               else
                 Res = false;
           }
-        if (!Res && SizeVirtual.y > Rect.Height)   // we will have a scroll bar
+        if (!Res && SizeVirtual.y > Rect.Height)   // we will have a vertical scroll bar
           {
             Res = true;
             if (Event->Type == etMouseDown && Event->Key == KeyMouseWheelDown)
-              Scroll.y += 16;
+              Scroll.y += MouseWheelDistance;
             else if (Event->Type == etMouseDown && Event->Key == KeyMouseWheelUp)
-              Scroll.y -= 16;
+              Scroll.y -= MouseWheelDistance;
             else if (Event->Type == etMouseDown && Event->Key == KeyMouseLeft &&   // My left click
                 Event->X - Offset.x >= Rect.Width - ScrollBarWidth)   // Click is on the vert scroll bar
               {
                 Drag.y = Event->Y;
                 DragVal.y = Scroll.y;
-                Form->EventLock = this;
               }
             else if (Event->Type == etMouseMove && Event->MouseKeys == Bit [KeyMouseLeft - 1] && Drag.y >= 0)   // Drag with left mouse button
-              Scroll.y = DragVal.y + (Event->Y - Drag.y) * SizeVirtual.y / Rect.Height;
+              Scroll.y = DragVal.y + (longint) (Event->Y - Drag.y) * (longint) SizeVirtual.y / (longint) Rect.Height;
             else
               Res = false;
           }
         if (Res)
           {
+            //DebugAddP ("ScrollBars: Scroll", Scroll);//####
             Scroll.y = Limit (Scroll.y, 0, SizeVirtual.y - Rect.Height + ScrollBarWidth);
             Scroll.x = Limit (Scroll.x, 0, SizeVirtual.x - Rect.Width + ScrollBarWidth);
             //if (Scroll.x != ScrollOld.x || Scroll.y != ScrollOld.y)
@@ -2238,16 +2430,18 @@ bool _Container::ScrollRegionBarsDraw (void)
     bool Res;
     int Bar1, Bar2;
     int h;
+    //_Point tbs;
     //
-    RenderTargetOffset.x += Scroll.x;
-    RenderTargetOffset.y += Scroll.y;
+    //tbs = TargetBitmapScroll;
+    TargetBitmapScroll = {0, 0};
     Res = false;
     if (SizeVirtual.y > Rect.Height)
       {
         Res = true;
         h = Rect.Height - ScrollBarWidth;
-        Bar1 = h * Scroll.y / SizeVirtual.y;
-        Bar2 = h * h / SizeVirtual.y;
+        Bar1 = (longint) h * (longint) Scroll.y / (longint) SizeVirtual.y;
+        Bar2 = (longint) h * (longint) h / (longint) SizeVirtual.y;
+        //DebugAddP ("  DrawScrollBar: Bars", {Bar1, Bar2});
         DrawScrollBar (true, Bar1, Bar1 + Bar2);
       }
     if (SizeVirtual.x > Rect.Width)
@@ -2258,8 +2452,7 @@ bool _Container::ScrollRegionBarsDraw (void)
         Bar2 = h * h / SizeVirtual.x;
         DrawScrollBar (false, Bar1, Bar1 + Bar2);
       }
-    RenderTargetOffset.x -= Scroll.x;
-    RenderTargetOffset.y -= Scroll.y;
+    //TargetBitmapScroll = tbs;
     return Res;
   }
 
@@ -2278,12 +2471,10 @@ void _Container::FillGradient (_Rect Rect, int Colour1, int Colour2)
 
 void _Container::DrawBitmap (_Bitmap *Bitmap, _Rect rSrc, _Rect rDest, bool Transparent)
   {
-    rDest.x += RenderTargetOffset.x;
-    rDest.y += RenderTargetOffset.y;
     if (Transparent)
       RenderBitmapTransparentTL (Form->Window, Bitmap, rSrc, rDest);
     else
-      RenderBitmap (Form->Window, Bitmap, rSrc, rDest, -1);
+      RenderBitmapResize (Form->Window, Bitmap, rSrc, rDest, -1);
   }
 
 /*
@@ -2347,6 +2538,7 @@ _Button::_Button (_Container *Parent, _Rect Rect, char *Text_, _Action Action) :
   {
     Colour = cButton1;
     ColourGrad = cButton2;
+    //Alpha = 64;//%%%%
     if (ButtonStyle == bsSimple)
       Colour = -1;
     Align = aCenter;
@@ -2406,77 +2598,75 @@ void _Button::DrawCustom (void)
 
 bool _Button::ProcessEventCustom (_Event *Event, _Point Offset)
   {
+    bool Res;
     bool DownOld, HoverOld;;
     _Container *Sibling;
     _Button *SiblingButton;
-    bool Res;
     //
     Res = false;
-    DownOld = Down;
-    HoverOld = Hover;
-    if (IsEventMine (Event, Offset))   // Either by location OR Forced
+    if (IsEventMine (Event, Offset))   // Either by mouse location OR Locked to me
       {
-        if (Event->Key == KeyMouseLeft)   // Left Mouse Down
-          if (Event->Type == etMouseDown)   // Left Mouse Down
+        DownOld = Down;
+        HoverOld = Hover;
+        if (Event->Type == etMouseDown && Event->Key == KeyMouseLeft)   // Left Mouse Down
+          {
+            Res = true;
+            Flag = Down;
+            Down = true;
+            if (Grouped)   // Check for grouped
+              if (Parent && Parent->Children)
+                {
+                  Sibling = Parent->Children;
+                  while (Sibling)
+                    {
+                      if (Sibling != this)
+                        {
+                          SiblingButton = dynamic_cast <_Button *> (Sibling);
+                          if (SiblingButton)
+                            if (SiblingButton->Down && SiblingButton->Grouped)
+                              {
+                                SiblingButton->Down = false;
+                                SiblingButton->Flag = false;
+                                SiblingButton->Invalidate (true);
+                                if (SiblingButton->Action)
+                                  SiblingButton->Action (Sibling);
+                              }
+                        }
+                      Sibling = Sibling->Next;
+                    }
+                }
+          }
+        else if (Event->Type == etMouseUp && Event->Key == KeyMouseLeft)   // Left Mouse Up
+          {
+            Res = true;
+            if (Toggle)
+              Down = !Flag;
+            else   // not Toggle
+              Down = Grouped;
+          }
+        //else if (Event->Type == etMouseMove && ButtonStyle != bsNormal)
+          if (IsEventWithin (Event, Offset))   // Still over the button
             {
-              Res = true;
-              Flag = Down;
-              Down = true;
-              if (Grouped)   // Check for grouped
-                if (Parent && Parent->Children)
-                  {
-                    Sibling = Parent->Children;
-                    while (Sibling)
-                      {
-                        if (Sibling != this)
-                          {
-                            SiblingButton = dynamic_cast <_Button *> (Sibling);
-                            if (SiblingButton)
-                              if (SiblingButton->Down && SiblingButton->Grouped)
-                                {
-                                  SiblingButton->Down = false;
-                                  SiblingButton->Flag = false;
-                                  SiblingButton->Invalidate (true);
-                                  if (SiblingButton->Action)
-                                    SiblingButton->Action (Sibling);
-                                }
-                          }
-                        Sibling = Sibling->Next;
-                      }
-                  }
+              Hover = true;
               Form->EventLock = this;
             }
-          else if (Event->Type == etMouseUp)   // Left Mouse Up
+          else   // but moved off the button
             {
-              Res = true;
-              if (Toggle)
-                Down = !Flag;
-              else   // not Toggle
-                Down = Grouped;
+              Hover = false;
+              Form->EventLock = NULL;
+              if (!Toggle && !Grouped)   // ie non toggle switch
+                Down = DownOld = false;   // so cancel the action
             }
-        if (!Toggle && !Grouped)   // ie normal switch
-          if (!IsEventWithin (Event, Offset))   // but moved off the button
-            {
-              Down = DownOld = false;   // so cancel the action
-              Invalidate (true);
-            }
+        if (Hover != HoverOld)
+          Invalidate (true);
         if (Down != DownOld)   // Changed so Redraw and Action
           {
+            Res = true;
             Invalidate (true);
             if (!Down || Toggle || Grouped)
               if (Action)   // Call Handler
                 Action (this);
           }
-        if (ButtonStyle != bsNormal)
-          {
-            Hover = IsEventWithin (Event, Offset);
-            if (Hover != HoverOld)
-              Invalidate (true);
-          }
-        if (Hover || Event->MouseKeys & Bit [KeyMouseLeft - 1])   // Lock if Left key down
-          Form->EventLock = this;
-        else
-          Form->EventLock = NULL;
       }
     return Res;
   }
@@ -2496,23 +2686,23 @@ _ButtonRadio::_ButtonRadio (_Container *Parent, _Rect Rect, char *Text_, _Action
 
 void _ButtonRadio::DrawCustom (void)
   {
-    int r;
-    int cText, cCircle;
+    int r;   // Radius
+    int cText, cCircle;   // Colours
     _Point Size;
     int xCircle, xText;
     //
     cText = ColourTextFind ();
-    Size = TextMeasure (Font, "Ag");
+    Size = TextMeasure ("Ag");
     cCircle = ColourAdjust (cText, 140);
     r = Size.y * 3 / 8;
-    xText = 4 * r;
-    xCircle = 2 * r;
+    xText = 3 * r;
+    xCircle = r;
     if (Align == aRight)
       {
         xText = 0;
-        xCircle = Rect.Width - 2 * r;
+        xCircle = Rect.Width - r - 1;
       }
-    TextOutWrap ({xText, 0, Rect.Width - 4 * r, Rect.Height}, Text, Align, aCenter);
+    TextOutWrap ({xText, 0, Rect.Width - 3 * r, Rect.Height}, Text, Align, aCenter);
     DrawCircle (xCircle, Rect.Height / 2, r, cCircle, -1);
     if (Hover)
       DrawCircle (xCircle, Rect.Height / 2, r - 1, cCircle, -1);
@@ -2527,6 +2717,7 @@ void _ButtonRadio::DrawCustom (void)
 
 _CheckBox::_CheckBox (_Container *Parent, _Rect Rect, char *Text_, _Action Action) : _Button (Parent, Rect, Text_, Action)
   {
+    StyleCross = false;
     Align = aLeft;
     Toggle = true;
     Colour = -1;
@@ -2542,32 +2733,34 @@ void _CheckBox::DrawCustom (void)
     //
     cText = ColourTextFind ();
     cBox = ColourAdjust (cText, 140);
-    Size = TextMeasure (Font, "Ag");
+    Size = TextMeasure ("Ag");
     h = Size.y * 3 / 8;
-    x0 = h;
+    x0 = 0;
     y0 = Rect.Height / 2 - h;
-    xText = 4 * h;
+    xText = 3 * h;
     if (Align == aRight)
       {
-        x0 = Rect.Width - 3 * h;
+        x0 = Rect.Width - 2 * h;
         xText = 0;
       }
-    TextOutWrap ({xText, 0, Rect.Width - 4 * h, Rect.Height}, Text, Align, aCenter);
+    TextOutWrap ({xText, 0, Rect.Width - 3 * h, Rect.Height}, Text, Align, aCenter);
     DrawRectangle ({x0, y0, h * 2, h * 2}, cBox, cBox, -1);
     if (Hover)
       DrawRectangle ({x0 + 1, y0 + 1, h * 2 - 2, h * 2 - 2}, cBox, cBox, -1);
     if (Down)
-      {
-        // Tick
-        x0 += h / 2;
-        y0 += h / 3;
-        h = h * 2 / 3;
-        DrawLine (x0, y0 + h, x0 + h, y0 + 2*h, cText, 2);
-        DrawLine (x0 + h, y0 + 2*h, x0 + 3*h, y0, cText, 2);
-        /*/ Cross
-        DrawLine (x0 + 1, y0 + 1, x0 + h - 2, y0 + h - 2, c1, 2);
-        DrawLine (x0 + h - 2, y0 + 1, x0 + 1, y0 + h - 2, c1, 2);*/
-      }
+      if (StyleCross)   // Cross
+        {
+          DrawLine (x0 + 2, y0 + 2, x0 + h * 2 - 3, y0 + h * 2 - 3, cBlue, 2);//cText
+          DrawLine (x0 + h * 2 - 3, y0 + 2, x0 + 2, y0 + h * 2 - 3, cBlue, 2);//cText
+        }
+      else   // Tick
+        {
+          x0 += h / 2;
+          y0 += h / 3;
+          h = h * 2 / 3;
+          DrawLine (x0, y0 + h, x0 + h, y0 + 2*h, ColourAdjust (cGreen, 30), 2);//cText
+          DrawLine (x0 + h, y0 + 2*h, x0 + 5*h/2, y0 - h, ColourAdjust (cGreen, 30), 2);//cText
+        }
   }
 
 
@@ -2639,23 +2832,22 @@ _Label::_Label (_Container *Parent, _Rect Rect, char *Text_, _Align Align_, _Bor
     Align = Align_;
     AlignVert = aCenter;
     Border = Border_;
+    Margin = 0;
   }
 
 void _Label::DrawCustom (void)
   {
-    int Margin;
+    int m, SizeY;
     //
-    Margin = 0;
+    m = Margin;
     if (Border != bNone)
-      Margin = TextMargin;
-    TextOutWrap ({Margin, Margin, Rect.Width - 2 * Margin, Rect.Height - 2 * Margin}, Text, Align, AlignVert);
+      m += TextMargin;
+    SizeY = TextOutWrap ({m, m, Rect.Width - 2 * m, Rect.Height - 2 * m}, Text, Align, AlignVert);
+    if (AlignVert == aTop)
+      if (SizeY > Rect.Height)
+        SizeVirtual = {Rect.Width, SizeY};
     DrawBorder (Border, 0);
   }
-
-/*bool _Label::ProcessEventCustom (_Event *Event, _Point Offset)
-  {
-    return IsEventMine (Event, Offset);
-  }*/
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -2729,7 +2921,7 @@ void _LabelMoney::DrawCustom (void)
       *x++ = ')';
     StrCat (&x, Text);
     *x = 0;
-    TextOutAligned (NULL, {Margin, 0, Rect.Width - 2 * Margin, Rect.Height}, St, aRight, aCenter);
+    TextOutWrap ({Margin, 0, Rect.Width - 2 * Margin, Rect.Height}, St, aRight, aCenter);
     free (St);
   }
 
@@ -2791,7 +2983,7 @@ void _LabelTime::DrawCustom (void)
 //      }
     StrCat (&x, Text);
     *x = 0;
-    TextOutAligned (NULL, {Margin, 0, Rect.Width - 2 * Margin, Rect.Height}, St, aRight, aCenter);
+    TextOutWrap ({Margin, 0, Rect.Width - 2 * Margin, Rect.Height}, St, aRight, aCenter);
     free (St);
   }
 
@@ -2823,7 +3015,7 @@ void _LabelDateTime::DrawCustom (void)
     Margin = 0;
     if (Border != bNone)
       Margin = TextMargin;
-    TextOutAligned (NULL, {Margin, 0, Rect.Width - 2 * Margin, Rect.Height}, Res, Align, aCenter);
+    TextOutWrap ({Margin, 0, Rect.Width - 2 * Margin, Rect.Height}, Res, Align, aCenter);
     DrawBorder (Border, 0);
   }
 
@@ -2848,7 +3040,7 @@ void _LabelDateTime::PollCustom (void)
 _LabelStrip::_LabelStrip (_Container *Parent, int *YPos, int Height, char *Text_) : _Label (Parent, {0, *YPos, Parent->Rect.Width, abs (Height)}, Text_, aCenter, bNone) //bRaised
   {
     *YPos += abs (Height);
-    FontSet (FontFileDefault, Abs (Height), Height < 0 ? fsBold : fsNone);
+    FontSet (NULL, Abs (Height), Height < 0 ? fsBold : fsNone);
   }
 
 
@@ -2870,13 +3062,18 @@ _LabelScroll::_LabelScroll (_Container *Parent, _Rect Rect, char *Text_, int Sli
 void _LabelScroll::DrawCustom (void)
   {
     _Point Size;
+    _Font *Font_;
     //
-    TextOutAligned (NULL, {SlidX, 0, Rect.Width, Rect.Height}, Text, aLeft, aCenter);
-    Size = TextMeasure (Font, Text);
-    if (-SlidX >= Size.x)
+    Font_ = FontFind ();
+    if (Font_)
       {
-        SlidX = Rect.Width;
-        Tick = ClockMS ();
+        TextOutAligned ({SlidX, 0, Rect.Width, Rect.Height}, Text, aLeft, aCenter);
+        Size = TextMeasure (Text);
+        if (-SlidX >= Size.x)
+          {
+            SlidX = Rect.Width;
+            Tick = ClockMS ();
+          }
       }
   }
 
@@ -2898,60 +3095,78 @@ void _LabelScroll::PollCustom (void)
 //
 // EDIT NUMBER BOX (from _Container)
 
-_EditNumber::_EditNumber (_Container *Parent, _Rect Rect, char *Text, int Max_, _Action Action_) : _Container (Parent, Rect, Text)
+_EditNumber::_EditNumber (_Container *Parent, _Rect Rect, char *Text, int Min_, int Max_, _Action Action_) : _Container (Parent, Rect, Text)
   {
+    Min = Min_;
     Max = Max_;
-    Value = 0;
+    Value = Min_;
     Action = Action_;
     Colour = cTextBgnd;
     ColourGrad = -1;
-    if (!Form->KeyFocus)
-      Form->KeyFocus = this;
+    if (!Form->Focused)
+      Form->Focused = this;
   }
 
 bool _EditNumber::ProcessEventCustom (_Event *Event, _Point Offset)
   {
-    int Ch;
+    int Key;
     int ValueOld;
     bool Res;
+    bool Check;
     //
     Res = false;
+    Check = false;
     ValueOld = Value;
-    if (CheckFocus (Event, Offset))
-      NewFocus = true;
+    if (FocusCheck (Event, Offset))
+      {
+        NewFocus = true;
+        Check = true;
+      }
     if (IsEventMine (Event, Offset))
       {
         if (Event->Type == etMouseDown)
           {
             Res = true;
+            Check = true;
             if (Event->Key == KeyMouseWheelUp)
               Value++;
             else if (Event->Key == KeyMouseWheelDown)
               Value--;
           }
         // Process Key presses
-        else if (Event->Type == etKeyDown && Form->KeyFocus == this)
+        else if (Event->Type == etKeyDown && Form->Focused == this)
           {
             Res = true;
-            Ch = Event->Key;
-            if (Ch == bs)
+            Key = Event->Key;
+            if (Key == bs)
               Value /= 10;
-            else if ((Ch >= '0') && (Ch <= '9'))
+            else if (IsDigit (Key))
               {
                 if (NewFocus)
                   Value = 0;
-                Value = Value * 10 + (Ch - '0');
+                Value = Value * 10 + (Key - '0');
               }
-            else if (Ch == KeyUp)
-              Value++;
-            else if (Ch == KeyDown)
-              Value--;
             else
-              Res = false;
+              {
+                Check = true;
+                if (Key == KeyUp)
+                  Value++;
+                else if (Key == KeyDown)
+                  Value--;
+              }
             NewFocus = false;
           }
+        else if (Event->Type == etMouseMove)   // on move (away), check minimum
+          {
+            NewFocus = true;
+            Check = true;
+          }
       }
-    Value = Limit (Value, 0, Max);
+    if (Check)
+      if (Value < Min)
+        Value = Min;
+    if (Value > Max)
+      Value = Max;
     if (Value != ValueOld)
       {
         Invalidate (true);
@@ -2965,7 +3180,6 @@ void _EditNumber::DrawCustom (void)
   {
     char *St;
     char *x;
-    //_Point Size;
     //
     St = (char *) malloc (StrLen (Text) + 16);
     x = St;
@@ -2973,9 +3187,10 @@ void _EditNumber::DrawCustom (void)
       StrCat (&x, Text);
     NumToStr (&x, Value);
     *x = 0;
-    //Size = TextMeasure (Font, St);
-    //TextOutAligned (NULL, {0, (Rect.Height - Size.y) / 2, Rect.Width - 4, Rect.Height}, St, aRight, aCenter);
-    TextOutWrap (AddMargin ({0, 0, Rect.Width, Rect.Height}, {TextMargin, 0}), St, aRight, aCenter);
+    if (Form->Focused == this)
+      TextCallBackCursor = StrPos (St, '\0');
+    TextOutAligned (AddMargin ({0, 0, Rect.Width, Rect.Height}, {TextMargin, 0}), St, aRight, aCenter);
+    TextCallBackCursor = NULL;
     free (St);
     DrawBezel (2);
   }
@@ -3023,17 +3238,13 @@ bool _Slider::ProcessEventCustom (_Event *Event, _Point Offset)
           {
             MouseDown = true;
             CalcValue = true;
-            Form->EventLock = this;
           }
         else if (Event->Type == etMouseDown && Event->Key == KeyMouseWheelUp)   // wheel up
           Value++;
         else if (Event->Type == etMouseDown && Event->Key == KeyMouseWheelDown)   // wheel down
           Value--;
         else if (Event->Type == etMouseUp)
-          {
-            MouseDown = false;
-            Form->EventLock = NULL;
-          }
+          MouseDown = false;
         else if (Event->Type == etMouseMove)
           {
             if (MouseDown)
@@ -3078,7 +3289,7 @@ void _Slider::DrawCustom (void)
     // Draw Markers
     if (Sections > 0)
       {
-        for (s = 0; s <= Sections; s++)
+        for (s = 1; s < Sections; s++)
           if (Vertical)
             {
               y = s * (Rect.Height - 2 * SliderMargin) / Sections + SliderMargin;
@@ -3153,17 +3364,13 @@ bool _Knob::ProcessEventCustom (_Event *Event, _Point Offset)
             MouseX = Event->X;
             MouseY = Event->Y;
             MouseValue = Value;
-            Form->EventLock = this;
           }
         else if (Event->Type == etMouseDown && Event->Key == KeyMouseWheelUp)
           Value++;
         else if (Event->Type == etMouseDown && Event->Key == KeyMouseWheelDown)
           Value--;
         else if (Event->Type == etMouseUp)
-          {
-            MouseX = MouseY = -1;
-            Form->EventLock = NULL;
-          }
+          MouseX = MouseY = -1;
         else if (Event->Type == etMouseMove)
           {
             if (MouseX >= 0)
@@ -3192,7 +3399,7 @@ void _Knob::DrawCustom (void)
     Rad = Min (Rect.Width, Rect.Height) / 3;
     c0 = ColourFind ();
     cf = ColourTextFind ();
-    cm = ColourAverage (c0, cf);
+    cm = cf;
     // Draw MArkers
     for (i = 0; i < Markers; i++)
       {
@@ -3281,31 +3488,21 @@ void _Wait::PollCustom (void)
 _Image::_Image (_Container *Parent, _Rect Rect, char *Filename, bool Transparent_) : _Container (Parent, Rect, Filename)
   {
     Transparent = Transparent_;
-    //Bitmap = NULL;
     Stretch = sNormal;
     Align = aCenter;
     AlignVert = aCenter;
-  }
-
-_Image::~_Image (void)
-  {
-    //if (Bitmap)
-    //  BitmapDestroy (Bitmap);
   }
 
 void _Image::DrawCustom (void)
   {
     _Rect rSrc, rDest;
     _Point Size, Size_;
-    char *s;
     //
     if (Bitmap == NULL && Text)
       {
-        s = AddHomePath (Text);
-        Bitmap = BitmapLoad (Form->Window, s);
+        Bitmap = BitmapLoadResource (Form->Window, Text);
         if (Bitmap == NULL)
-          DebugAddS ("Image: File not loaded: ", s);
-        free (s);
+          DebugAddS ("Image: File not loaded: ", Text);
       }
     if (Bitmap)
       {
@@ -3375,15 +3572,14 @@ _SelectionList::_SelectionList (_Container *Parent, _Rect Rect_, char *Text_, _A
     Hovering = -1;
     ListOffset = 0;
     Selected = -1;
-    Align = aLeft;
     Action = Action_;
     Colour = cForm1;
     ColourGrad = cForm2;
-    if (cMenu >= 0)
+    /*if (cMenu >= 0)
       {
         Colour = cMenu;
         ColourGrad = -1;
-      }
+      }*/
     ItemSize = {0, 0};
     ps = Text;
     ListSize = 0;
@@ -3392,7 +3588,7 @@ _SelectionList::_SelectionList (_Container *Parent, _Rect Rect_, char *Text_, _A
         Item = StrGetItem (&ps, '\t');
         if (!Item)
           break;
-        Size = TextMeasure (Font, Item);
+        Size = TextMeasure (Item);
         ItemSize.x = Max (ItemSize.x, Size.x);
         ItemSize.y = Max (ItemSize.y, Size.y);
         free (Item);
@@ -3414,15 +3610,24 @@ _SelectionList::_SelectionList (_Container *Parent, _Rect Rect_, char *Text_, _A
     Form->EventLock = this;
   }
 
+_SelectionList::~_SelectionList (void)
+  {
+    //if (Form->EventLock == this)   // check this has not been taken over %%%%
+    //  Form->EventLock = NULL;
+  }
+
 void _SelectionList::DrawCustom (void)
   {
     int i, x, y;
-    char *Item, *ps;
+    char *Item, *Item_;
+    char *ps;
     _Rect Rec;
+    int cLine;
    //
     if (!Text)
       return;
     // Draw List
+    cLine = ColourAverage (ColourFind (), ColourTextFind ());
     i = 0;
     ps = Text;
     y = ListMargin;
@@ -3435,11 +3640,16 @@ void _SelectionList::DrawCustom (void)
           {
             //DebugAddS ("List Draw Item: ", Item);  //####
             Rec = {0, y, Rect.Width, ItemSize.y};
+            Item_ = Item;
+            if (*Item_ == '_')
+              Item_++;
             if (i == Hovering)
-              TextOutWrapInverse (Rec, Item, Align, {ListMargin, 0});
+              TextOutInverse (Rec, Item_, ListMargin);
             else
-              TextOutWrap (AddMargin (Rec, {ListMargin, 0}), Item, Align, aCenter);
+              TextOutAligned (AddMargin (Rec, {ListMargin, 0}), Item_, aLeft, aCenter);
             y += ItemSize.y;
+            if (*Item == '_')
+              DrawLine (0, y, Rect.Width - 1, y, cLine, 1);
           }
         free (Item);
         i++;
@@ -3519,9 +3729,9 @@ _Menu::_Menu (_Container *Parent, _Rect Rect_, char *Text_, _Action Action_) : _
       {
         ps = Text;
         Name = StrGetItem (&ps, '\t');
-        StepSpace (&ps);
+        //StepSpace (&ps);
         StrAssignCopy (&List, ps);
-        Size = TextMeasure (Font, Name);
+        Size = TextMeasure (Name);
         Rect.Width = Size.x + 2 * ListMargin;
       }
     RectLock = 0;
@@ -3541,7 +3751,7 @@ void _Menu::DrawCustom (void)
       return;
     Rec = {0, 0, Rect.Width, Rect.Height};
     if (SelectionList)
-      TextOutWrapInverse (Rec, Name, aCenter, {ListMargin, 0});
+      TextOutInverse (Rec, Name, ListMargin);
     else
       TextOutWrap (Rec, Name, aCenter, aCenter);
   }
@@ -3637,31 +3847,19 @@ void ActionDropListSelectionList (_SelectionList *SelectionList)
     _DropList *DropList;
     //
     DropList = (_DropList *) SelectionList->DataContainer;
-    if (DropList->SelectionList)
+    if (SelectionList->Selected >= 0)
       {
-        DropList->Selected = SelectionList->Selected;
-        if (DropList->Selected >= 0)
-          if (DropList->Action)
-            DropList->Action ((_Container *) DropList);
-        DropList->SelectionList->Die ();
-        DropList->SelectionList = NULL;
-        DropList->Invalidate (true);
+        if (DropList->SelectionList)
+          {
+            DropList->Selected = SelectionList->Selected;
+            if (DropList->Action)
+              DropList->Action ((_Container *) DropList);
+            DropList->Invalidate (true);
+          }
       }
+    SelectionList->Die ();
+    DropList->SelectionList = NULL;
   }
-
-/*
-void ActionDropList (_ButtonArrow *Button)
-  {
-    _DropList *DropList;
-    //
-    DropList = (_DropList *) Button->DataContainer;
-    if (Button->Down)
-      {
-        DropList->SelectionList = new _SelectionList (DropList->Parent, {DropList->Rect.x, DropList->Rect.y + DropList->Rect.Height, 16, 16}, DropList->Text, (_Action) ActionDropListSelectionList);
-        DropList->SelectionList->DataContainer = DropList;   // remember where we came from
-      }
-  }
-*/
 
 _DropList::_DropList (_Container *Parent, _Rect Rect_, char *Text_, _Action Action_) : _Container (Parent, Rect_, Text_)
   {
@@ -3767,7 +3965,7 @@ void _Tabs::DrawCustom (void)
         Item = StrGetItem (&ps, '\t');
         if (!Item)
           break;
-        Size = TextMeasure (Font, Item);
+        Size = TextMeasure (Item);
         Width = Size.x + 2 * TabMargin;
         Offset = TabOffset;
         if (i == Selected)
@@ -3781,7 +3979,7 @@ void _Tabs::DrawCustom (void)
         Rec = {x, 0 + Offset, Width, Rect.Height - Offset};
         DrawTab (Rec, Col, ColBG, i == Selected);
         Rec.y += TabMargin;
-        TextOutAligned (NULL, Rec, Item, aCenter, aLeft);
+        TextOutWrap (Rec, Item, aCenter, aLeft);
         free (Item);
         x += Rec.Width;
         i++;
@@ -3821,7 +4019,7 @@ bool _Tabs::ProcessEventCustom (_Event *Event, _Point Offset)
                     i = Selected;
                     break;
                   }
-                Size = TextMeasure (Font, Item);
+                Size = TextMeasure (Item);
                 free (Item);
                 x += Size.x + 2 * TabMargin;
                 if (Event->X + Offset.x < x)   // this tab selected
@@ -3831,10 +4029,10 @@ bool _Tabs::ProcessEventCustom (_Event *Event, _Point Offset)
             if (i != Selected)
               {
                 Selected = i;
-                if (Form->KeyFocus)
+                if (Form->Focused)
                   {
-                    c = Form->KeyFocus;
-                    Form->KeyFocus = NULL;
+                    c = Form->Focused;
+                    Form->Focused = NULL;
                     c->Invalidate (true);
                   }
                 Invalidate (true);
@@ -3849,12 +4047,99 @@ bool _Tabs::ProcessEventCustom (_Event *Event, _Point Offset)
 
 ///////////////////////////////////////////////////////////////////////////////
 //
+// SPLITTER
+
+_Splitter::_Splitter (_Container *Parent, _Rect Rect) : _Container (Parent, Rect)
+  {
+    Reference = {-1, -1};
+    Colour = ColourAdjust (cForm1, 90);
+  }
+
+void _Splitter::DrawCustom (void)
+  {
+    int x, y, s;
+    //
+    // Draw ??
+    x = Rect.Width / 2;
+    y = Rect.Height / 2;
+    s = Min (Rect.Width, Rect.Height) / 2;
+    if (Rect.Height > Rect.Width)   // Vertical Bar
+      DrawKnerl ({x - s + 1, y - s, 2 * s - 2, 2 * s}, true);
+    else
+      DrawKnerl ({x - s, y - s + 1, 2 * s, 2 * s - 2}, false);
+    //DrawRectangle ({x - s, y - s, s+s, s+s}, -1, -1, ColourTextFind ());
+  }
+
+bool _Splitter::ProcessEventCustom (_Event *Event, _Point Offset)
+  {
+    bool Res;
+    _Point p;
+    int dx, dy;
+    _Container *c;
+    //
+    Res = false;
+    if (IsEventMine (Event, Offset))
+      {
+        p = {Event->X - Parent->Rect.x, Event->Y - Parent->Rect.y};   // Mouse Relative to Parent
+        //DebugAddR ("Splitter:p psz", {p.x, p.y, Parent->Rect.Width, Parent->Rect.Height});
+        //DebugAddP ("Splitter:XY", {Event->X, Event->Y});
+        //DebugAddP ("Splitter:Offset", {Offset});
+        Res = true;
+        if (Event->Type == etMouseDown && Event->Key == KeyMouseLeft)   // Left Mouse Button Down
+          Reference = {Event->X, Event->Y};
+        else if (Event->Type == etMouseMove && (Event->MouseKeys & Bit [KeyMouseLeft - 1]))   // Mouse Move with Left Button
+          if (p.x >= 8 && p.x < Parent->Rect.Width - 8)   // Don't move outside of Parent
+            if (p.y >= 8 && p.y < Parent->Rect.Height - 8)
+              {
+                // Define Splitter movement
+                dx = dy = 0;
+                if (Rect.Width > Rect.Height)   // Horizontal Splitter
+                  dy = Event->Y - Reference.y;
+                else   // Vertical Splitter
+                  dx = Event->X - Reference.x;
+                // Find effected siblings
+                if (dx || dy)
+                  {
+                    c = Parent->Children;
+                    while (c)
+                      {
+                        if ((c->Rect.x + c->Rect.Width == Rect.x) && dx)   // Left sibling
+                          c->Resize (c->Rect.Width + dx, c->Rect.Height);
+                        else if ((Rect.x + Rect.Width == c->Rect.x) && dx)   // Right sibling
+                          {
+                            c->Resize (c->Rect.Width - dx, c->Rect.Height);
+                            c->Rect.x += dx;
+                          }
+                        if ((c->Rect.y + c->Rect.Height == Rect.y) && dy)   // Top sibling
+                          c->Resize (c->Rect.Width, c->Rect.Height + dy);
+                        else if ((Rect.y + Rect.Height == c->Rect.y) && dy)   // Bottom sibling
+                          {
+                            c->Resize (c->Rect.Width, c->Rect.Height - dy);
+                            c->Rect.y += dy;
+                          }
+                        c = c->Next;
+                      }
+                    Rect.x += dx;   // Move the Splitter itself
+                    Rect.y += dy;
+                    Invalidate (true);
+                    Reference = {Event->X, Event->Y};
+                  }
+              }
+      }
+    return Res;
+  };
+
+
+///////////////////////////////////////////////////////////////////////////////
+//
 // SOFT KEYBOARD
 
-char *Keyboard1 [] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "  ", NULL};
+char *Keyboard1 [] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "\b", NULL};
 char *Keyboard2 [] = {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", NULL};
 char *Keyboard3 [] = {"A", "S", "D", "F", "G", "H", "J", "K", "L", NULL};
-char *Keyboard4 [] = {"Z", "X", "C", "V", "B", "N", "M", NULL};
+char *Keyboard4 [] = {"Z", "X", "C", "V", "B", "N", "M", " ", NULL};
+
+int KeySeries [2];
 
 void _ButtonAction (_Container *Container)
   {
@@ -3867,19 +4152,25 @@ void _ButtonAction (_Container *Container)
         {
           s = Button->TextGet ();
           if (s && s [0])
-            Button->Form->KeyPress = s [0];
+            {
+              KeySeries [0] = s [0];
+              KeySeries [1] = 0;
+              Button->Form->KeySeries = KeySeries;
+              DebugAdd ("SoftKeyboard press");
+            }
         }
   }
+
+#define SoftKeyboardGap 4
 
 _SoftKeyboard::_SoftKeyboard (_Container *Parent, _Rect Rect_) : _Container (Parent, Rect_, NULL)
   {
     int y;
-    int Gap = 8;
     //
-    ButtonSpacing.x = (Rect.Width + Gap) / 12;
-    ButtonSpacing.y = (Rect.Height + Gap) / 4;
-    ButtonSize.x = ButtonSpacing.x - Gap;
-    ButtonSize.y = ButtonSpacing.y - Gap;
+    ButtonSpacing.x = (Rect.Width + SoftKeyboardGap) / 12;
+    ButtonSpacing.y = (Rect.Height + SoftKeyboardGap) / 4;
+    ButtonSize.x = ButtonSpacing.x - SoftKeyboardGap;
+    ButtonSize.y = ButtonSpacing.y - SoftKeyboardGap;
     y = 0;
     CreateButtons (Keyboard1, {0, y});
     y += ButtonSpacing.y;
@@ -3892,13 +4183,17 @@ _SoftKeyboard::_SoftKeyboard (_Container *Parent, _Rect Rect_) : _Container (Par
 
 void _SoftKeyboard::CreateButtons (char *Keys [], _Point Start)
   {
+    _Button *b;
+    //
     while (*Keys)
       {
-        if (StrLen (*Keys) == 1)
-          new _Button (this, {Start.x, Start.y, ButtonSize.x, ButtonSize.y}, *Keys, _ButtonAction);
+        if (*Keys [0] <= ' ')
+          Start.x += ButtonSize.x / 2;
+        if (*Keys [0] < ' ')   // backspace
+          b = new _ButtonArrow (this, {Start.x, Start.y, ButtonSize.x + ButtonSpacing.x, ButtonSize.y}, *Keys, _ButtonAction, dLeft);
         else
-          new _ButtonArrow (this, {Start.x, Start.y, ButtonSize.x + ButtonSpacing.x, ButtonSize.y}, *Keys, _ButtonAction, dLeft);
-        Start.x += ButtonSpacing.x;
+          b = new _Button (this, {Start.x, Start.y, *Keys [0] == ' ' ? ButtonSize.x * 4: ButtonSize.x, ButtonSize.y}, *Keys, _ButtonAction);
+        Start.x += b->Rect.Width + SoftKeyboardGap;
         Keys++;
       }
   }

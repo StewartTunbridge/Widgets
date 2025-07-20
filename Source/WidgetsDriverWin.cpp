@@ -18,17 +18,19 @@ extern void DebugAddR (const char *St, _Rect *r);
 extern void DebugAddP (const char *St, _Point pnt);
 extern void DebugAddInt (const char *St, int n);   // "
 
-WNDCLASS wc;
+char *ClipboardData = NULL;
+HWND ClipboardWinID = NULL;
+bool ClipboardReady = false;
 
-//#define TexturesEnabled
+WNDCLASS wc;
 
 typedef struct
   {
     int Width, Height;
     unsigned int *Pixels;
-    bool *Mask;
+    byte *Alpha;
     BITMAPINFO BitmapInfo;
-  } __Texture;
+  } __Bitmap;
 
 typedef struct
   {
@@ -38,18 +40,8 @@ typedef struct
     //
     byte WindowAttributes;
     int SizeX, SizeY;
-    //Pixmap Icon;
-    __Texture *tIcon;
-    //Pixmap pIcon;
+    __Bitmap *tIcon;
   } __Window;
-
-typedef struct
-  {
-    int Width, Height;
-    unsigned int *Pixels;
-  } __Bitmap;
-
-bool ForceSoftwareRendering = false;
 
 HINSTANCE WinhInstance = 0, WinhPrevInstance = 0;
 
@@ -60,12 +52,22 @@ void ShowWindowsError (void)
 
 int ColourToWinColour (int Colour)
   {
-    return (Colour & 0x00FF00) | (Colour >> 16) | ((Colour << 16) & 0xFF0000);
+    //return (Colour & 0x00FF00) | (Colour >> 16) | ((Colour << 16) & 0xFF0000);
+    _Colour Col;
+    //
+    Col.RGBA = Colour;
+    Swap (Col.Prime [0], Col.Prime [2]);
+    return Col.RGBA;
   }
 
 int WinColourToColour (int Colour)
   {
-    return (Colour & 0x00FF00) | (Colour >> 16) | ((Colour << 16) & 0xFF0000);
+    //return (Colour & 0x00FF00) | (Colour >> 16) | ((Colour << 16) & 0xFF0000);
+    _Colour Col;
+    //
+    Col.RGBA = Colour;
+    Swap (Col.Prime [0], Col.Prime [2]);
+    return Col.RGBA;
   }
 
 bool WidgetsInit (void)
@@ -186,7 +188,7 @@ void WindowDestroy (_Window *Window)
   {
     __Window *Window_;
     //
-    Window_ = Window;
+    Window_ = (__Window *) Window;
     DestroyWindow (Window_->hWindow);
     free (Window_);
     WindowNumber--;
@@ -197,7 +199,7 @@ void WindowGetPosSize (_Window *Window, int *x, int *y, int *Width, int *Height)
     __Window *Window_;
     RECT Rect;
     //
-    Window_ = Window;
+    Window_ = (__Window *) Window;
     if (!GetClientRect (Window_->hWindow, &Rect))
       return;
     if (x)
@@ -217,42 +219,36 @@ bool WindowSetPosSize (_Window *Window, int x, int y, int Width, int Height)
 
 bool WindowSetIcon (_Window *Window, _Bitmap *Bitmap)
   {
+    //wc.hIcon = LoadIconA %%%%%
     return false;
   }
 
-//PAINTSTRUCT Targetps;
-//HDC Targethdc = nullptr;
-
-__Texture *TargetTexture = nullptr;
-
-bool RenderTarget (_Window *Window, _Texture *Texture, int Colour, _Rect Clip)   // Specify where to draw (and hint background colour)
+// Put up on screen after all the Rendering
+void RenderPresent (_Window *Window_, _Bitmap *Bitmap_, _Rect Source, _Point Dest, byte Alpha)
   {
-    //__Window *Window_;
+    __Window *Window;
+    __Bitmap *Bitmap;
     //
-    //Window_ = Window;
-    TargetTexture = Texture;
-    //Targethdc = BeginPaint (Window_->hwnd, &Targetps);
-    return true;
+    Window = Window_;
+    Bitmap = Bitmap_;
+    ///* works
+    if (StretchDIBits (Window->WinDC, Dest.x, Dest.y + Source.Height, Source.Width, -Source.Height, Source.x, Source.y, Source.Width, Source.Height, Bitmap->Pixels, &Bitmap->BitmapInfo, DIB_RGB_COLORS, SRCCOPY) == 0)
+                DebugAdd ("Render Bitmap: StretchDIBBits returned 0");
+    //*/
+    //BitBlt (Window->WinDC, Dest.x, Dest.y, Source.Width, Source.Height, Bitmap->BitmapInfo.???
   }
 
-void RenderPresent (_Window *Window, byte Alpha)   // Put up on screen
+_Bitmap *BitmapCreate (_Window *Window, int Width, int Height)
   {
-    __Window *Window_;
+    __Bitmap *Res;
     //
-    Window_ = Window;
-    //EndPaint (Window_->hwnd, &Targetps);
-  }
-
-_Texture *TextureCreate (_Window *Window, int Width, int Height)
-  {
-    __Texture *Res;
-    //
-    Res = malloc (sizeof (__Texture));
+    Res = (__Bitmap *) malloc (sizeof (__Bitmap));
     *Res = {0};
     Res->Width = Width;
     Res->Height = Height;
-    Res->Pixels = malloc (Width * Height * sizeof (unsigned int));
-    Res->Mask = nullptr;
+    Res->Pixels = (unsigned int *) malloc (Width * Height * sizeof (unsigned int));
+    //memset (Res->Pixels, 0x80, Width * Height * sizeof (unsigned int));
+    //
     Res->BitmapInfo.bmiHeader.biSize = sizeof (Res->BitmapInfo.bmiHeader);
     Res->BitmapInfo.bmiHeader.biWidth = Res->Width;
     Res->BitmapInfo.bmiHeader.biHeight = Res->Height;
@@ -265,48 +261,30 @@ _Texture *TextureCreate (_Window *Window, int Width, int Height)
     return Res;
   }
 
-void TextureDestroy (_Window *Window, _Texture *Texture)
-  {
-    __Texture *Texture_;
-    //
-    if (Texture)
-      {
-        Texture_ = Texture;
-        free (Texture_->Pixels);
-        free (Texture_->Mask);
-        free (Texture_);
-      }
-  }
-
-_Bitmap *BitmapCreate (_Window *Window, int Width, int Height)
-  {
-    __Bitmap *Res;
-    //
-    Res = malloc (sizeof (__Bitmap));
-    Res->Width = Width;
-    Res->Height = Height;
-    Res->Pixels = malloc (Width * Height * sizeof (unsigned int));
-    return Res;
-  }
-
 void BitmapDestroy (_Bitmap *Bitmap)
   {
     __Bitmap *Bitmap_;
     //
-    Bitmap_ = Bitmap;
-    free (Bitmap_->Pixels);
-    free (Bitmap_);
+    if (Bitmap)
+      {
+        Bitmap_ = (__Bitmap *) Bitmap;
+        if (Bitmap_->Pixels)
+          free (Bitmap_->Pixels);
+        free (Bitmap_);
+      }
   }
 
 bool BitmapGetSize (_Bitmap *Bitmap, int *Width, int *Height)
   {
     __Bitmap *Bitmap_;
     //
-    Bitmap_ = Bitmap;
-    if (Bitmap && Width && Height)
+    Bitmap_ = (__Bitmap *) Bitmap;
+    if (Bitmap)
       {
-        *Width = Bitmap_->Width;
-        *Height = Bitmap_->Height;
+        if (Width)
+          *Width = Bitmap_->Width;
+        if (Height)
+          *Height = Bitmap_->Height;
         return true;
       }
     return false;
@@ -318,8 +296,8 @@ int BitmapGetPixel (_Bitmap *Bitmap, int x, int y)
     //
     if (Bitmap)
       {
-        Bitmap_ = Bitmap;
-        if (x < Bitmap_->Width && y < Bitmap_->Height)
+        Bitmap_ = (__Bitmap *) Bitmap;
+        if (x >= 0 & y >= 0 && x < Bitmap_->Width && y < Bitmap_->Height)
           return WinColourToColour (Bitmap_->Pixels [y * Bitmap_->Width + x]);
       }
     return 0;
@@ -331,8 +309,8 @@ bool BitmapSetPixel (_Bitmap *Bitmap, int x, int y, int Colour)
     //
     if (Bitmap)
       {
-        Bitmap_ = Bitmap;
-        if (x < Bitmap_->Width && y < Bitmap_->Height)
+        Bitmap_ = (__Bitmap *) Bitmap;
+        if (x >= 0 & y >= 0 && x < Bitmap_->Width && y < Bitmap_->Height)
           {
             Bitmap_->Pixels [y * Bitmap_->Width + x] = ColourToWinColour (Colour);
             return true;
@@ -341,291 +319,19 @@ bool BitmapSetPixel (_Bitmap *Bitmap, int x, int y, int Colour)
     return false;
   }
 
-_Bitmap* BitmapFromTexture (_Window *Window, _Texture *Texture, int Width, int Height)
+void BitmapClear (_Bitmap *Bitmap)
   {
-    return nullptr;
-  }
-
-// Render Functions
-void RenderDrawPoint (_Window *Window, int Colour, int x, int y)
-  {
-    //__Window *Window_;
-    int i;
-    //
-    Colour = ColourToWinColour (Colour);
-    if (x < 0 || y < 0 || x >= TargetTexture->Width || y >= TargetTexture->Height)
-      return;
-    //Window_ = Window;
-    i = y * TargetTexture->Width + x;
-    TargetTexture->Pixels [i] = Colour;
-    if (TargetTexture->Mask)
-      TargetTexture->Mask [i] = true;
-  }
-
-void RenderDrawLine (_Window *Window, int Colour, int x1, int y1, int x2, int y2)
-  {
-    int i;
-    int dx, dy, sx, sy;
-    int err, e2;
-    //
-    if (x1 < 0 || x2 < 0 || x1 >= TargetTexture->Width || x2 >= TargetTexture->Width)
-      return;
-    if (y1 < 0 || y2 < 0 || y1 >= TargetTexture->Height || y2 >= TargetTexture->Height)
-      return;
-    Colour = ColourToWinColour (Colour);
-    i = y1 * TargetTexture->Width + x1;
-    if (x1 == x2)   // vertical line
-      while (true)
-        {
-          TargetTexture->Pixels [i] = Colour;
-          if (TargetTexture->Mask)
-            TargetTexture->Mask [i] = true;
-          if (y1 < y2)
-            {
-              y1++;
-              i += TargetTexture->Width;
-            }
-          else if (y1 > y2)
-            {
-              y1--;
-              i -= TargetTexture->Width;
-            }
-          else
-            break;
-        }
-    else if (y1 == y2)   // horizontal line
-      while (true)
-        {
-          TargetTexture->Pixels [i] = Colour;
-          if (TargetTexture->Mask)
-            TargetTexture->Mask [i] = true;
-          if (x1 < x2)
-            {
-              x1++;
-              i++;
-            }
-          else if (x1 > x2)
-            {
-              x1--;
-              i--;
-            }
-          else
-            break;
-        }
-    else   // diagonal line - https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
-      {
-        dx =  Abs (x2 - x1);
-        sx =  x1 < x2 ? 1 : -1;
-        dy = -Abs (y2 - y1);
-        sy = y1 < y2 ? 1 : -1;
-        err = dx + dy;  // error value e_xy
-        while (true)
-          {
-            TargetTexture->Pixels [i] = Colour;   // plot (x1, y1);
-            if (TargetTexture->Mask)
-              TargetTexture->Mask [i] = true;
-            if (x1 == x2 && y1 == y2)
-              break;
-            e2 = 2 * err;
-            if (e2 >= dy)   // e_xy+e_x > 0
-              {
-                err += dy;
-                x1 += sx;
-                i += sx;
-              }
-            if (e2 <= dx)   // e_xy+e_y < 0
-              {
-                err += dx;
-                y1 += sy;
-                if (sy > 0)
-                  i += TargetTexture->Width;
-                else
-                  i -= TargetTexture->Width;
-              }
-          }
-      }
-  }
-
-void RenderFillRect (_Window *Window, _Rect Rect, int Colour)
-  {
-    int y;
-    //
-    for (y = Rect.y; y < Rect.y + Rect.Height; y++)
-      RenderDrawLine (Window, Colour, Rect.x, y, Rect.x + Rect.Width - 1, y);
-  }
-
-void RenderFillTransparent (_Window *Window)
-  {
-    int i;
-    //
-    i = TargetTexture->Width * TargetTexture->Height * sizeof (bool);
-    if (TargetTexture->Mask == NULL)
-      TargetTexture->Mask = malloc (i);
-    memset (TargetTexture->Mask, false, i);
-  }
-
-bool RenderTexture (_Window *Window, _Texture *Texture, _Rect RecSource, int DestX, int DestY, byte AlphaOffset)
-  {
-    __Window *Window_;
-    __Texture *Texture_;
-    int is, id;
-    int dx, dy;
-    //
-    Window_ = Window;
-    Texture_ = Texture;
-    if (TargetTexture)
-      {
-        is = RecSource.y * Texture_->Width + RecSource.x;
-        id = DestY * TargetTexture->Width + DestX;
-        RecSource.Height = Min (RecSource.Height, Texture_->Height - RecSource.y);
-        RecSource.Height = Min (RecSource.Height, TargetTexture->Height - RecSource.y);
-        RecSource.Width = Min (RecSource.Width, Texture_->Width - RecSource.x);
-        RecSource.Width = Min (RecSource.Width, TargetTexture->Width - RecSource.x);
-        /*DebugAddR ("  RecSource:", &RecSource); //####
-        char ss [64], *s; //####
-        s = ss;
-        IntToStr (&s, TargetTexture->Width);
-        StrCat (&s, 'x');
-        IntToStr (&s, TargetTexture->Height);
-        *s = 0;
-        DebugAddS ("  RecDest:", ss); //#### */
-        for (dy = 0; dy < RecSource.Height; dy++)
-          {
-            for (dx = 0; dx < RecSource.Width; dx++)
-              if (Texture_->Mask == nullptr || Texture_->Mask [is + dx])
-                {
-                  TargetTexture->Pixels [id + dx] = Texture_->Pixels [is + dx];
-                  if (TargetTexture->Mask)
-                    TargetTexture->Mask [id + dx] = true;
-                }
-            is += Texture_->Width;
-            id += TargetTexture->Width;
-          }
-      }
-    else
-      if (StretchDIBits (Window_->WinDC, DestX, DestY + RecSource.Height, RecSource.Width, -RecSource.Height, RecSource.x, RecSource.y, RecSource.Width, RecSource.Height, Texture_->Pixels, &Texture_->BitmapInfo, DIB_RGB_COLORS, SRCCOPY) == 0)
-        DebugAdd ("Render Texture: StretchDIBBits returned 0"); //####
-    return true;
-  }
-
-bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, int ColTransparent)   // Allow resizing
-  {
-    __Window *Window_;
     __Bitmap *Bitmap_;
-    int cTrans;
-    int sMax, dMax;
-    int pixel;
-    int is, id;
-    int xs, ys, xd, yd;
-    int a;
-    bool get, put;
+    int i;
     //
-    //####
-    //DebugAddR ("Render Bitmap: RecSource", &RecSource);
-    //DebugAddR ("Render Bitmap: RecDest", &RecDest);
     if (Bitmap)
       {
-        Window_ = Window;
-        Bitmap_ = Bitmap;
-        if (Bitmap_->Width && Bitmap_->Height)
-          if (TargetTexture == nullptr)   // actual screen
-            {
-              if (StretchDIBits (Window_->WinDC, RecDest.x, RecDest.y + RecDest.Height, RecDest.Width, -RecDest.Height, RecSource.x, RecSource.y, RecSource.Width, RecSource.Height, Bitmap_->Pixels, &TargetTexture->BitmapInfo, DIB_RGB_COLORS, SRCCOPY) == 0)
-                DebugAdd ("Render Bitmap: StretchDIBBits returned 0");
-            }
-          else   // rendering to a __Texture
-            {
-              is = RecSource.y * Bitmap_->Width + RecSource.x;
-              id = RecDest.y * TargetTexture->Width + RecDest.x;
-              sMax = Bitmap_->Width * Bitmap_->Height;
-              dMax = TargetTexture->Width * TargetTexture->Height;
-              //cTrans = Bitmap_->Pixels [is];
-              // Generate Scaled and Masked Images
-              #define RenderStretch
-              #ifdef RenderStretch
-              cTrans = ColourToWinColour (ColTransparent);
-              xs = ys = 0;
-              xd = yd = 0;
-              get = put = true;
-              while (true)
-                {
-                  if (get & put)
-                    {
-                      get = false;
-                      if (is + xs < sMax)
-                        pixel = Bitmap_->Pixels [is + xs];
-                    }
-                  if (put)
-                    {
-                      put = false;
-                      if (id + xd < dMax)
-                        if (pixel != cTrans)
-                          {
-                            TargetTexture->Pixels [id + xd] = pixel;
-                            if (TargetTexture->Mask)
-                              TargetTexture->Mask [id + xd] = true;
-                          }
-                    }
-                  a = (xs+1) * RecDest.Width - (xd+1) * RecSource.Width;
-                  if (a <= 0)
-                    {
-                      xs++;
-                      get = true;
-                    }
-                  if (a >= 0)
-                    {
-                      xd++;
-                      put = true;
-                    }
-                  if (xs >= RecSource.Width && get)
-                    {
-                      get = put = true;
-                      xs = 0;
-                      xd = 0;
-                      a = (ys+1) * RecDest.Height - (yd+1) * RecSource.Height;
-                      if (a <= 0)
-                        {
-                          ys++;
-                          is += Bitmap_->Width;
-                          get = true;
-                        }
-                      if (a >= 0)
-                        {
-                          yd++;
-                          id += TargetTexture->Width;
-                          put = true;
-                        }
-                      if (ys >= RecSource.Height && get)
-                        break;
-                    }
-                }
-              #else
-              int dx, dy;
-              for (dy = 0; dy < RecSource.Height; dy++)
-                {
-                  for (dx = 0; dx < RecSource.Width; dx++)
-                    if (RecSource.x + dx < Bitmap_->Width && RecSource.y + dy < Bitmap_->Height && //####
-                        RecDest.x + dx < TargetTexture->Width && RecDest.y + dy < TargetTexture->Height)
-                      if (Transparent ? (Bitmap_->Pixels [is + dx] != cTrans) : true)
-                        {
-                          TargetTexture->Pixels [id + dx] = Bitmap_->Pixels [is + dx];
-                          if (TargetTexture->Mask)
-                            TargetTexture->Mask [id + dx] = true;
-                        }
-                  is += Bitmap_->Width;
-                  id += TargetTexture->Width;
-                }
-              #endif // RenderStretch
-            }
-        return true;
+        Bitmap_ = (__Bitmap *) Bitmap;
+        i = Bitmap_->Width * Bitmap_->Height;
+        memset (Bitmap_->Pixels, 0, i * sizeof (int));
       }
-    return false;
   }
 
-bool TextureToFile (_Window *Window, _Texture *Texture, int Width, int Height, char *Filename)
-  {
-    return false;
-  }
 
 /////////////////////////////////////////////////////////////////////////
 //
@@ -734,6 +440,13 @@ void EventPoll (_Event *Event)
     //char s [80], *sp;
     //
     //DebugAdd ("EventPoll-In");//####
+    if (ClipboardReady)
+      {
+        ClipboardReady = false;
+        Event->Type = etClipboard;
+        Event->WindowID = ClipboardWinID;
+        return;
+      }
     Event->Type = etNone;
     go = false;
     if (MessagesA != MessagesB)
@@ -762,6 +475,21 @@ void EventPoll (_Event *Event)
             else
               Event->Type = etKeyUp;
             Event->Key = CodeToKey (Msg.wParam);
+            byte KbdState [256];
+            wchar_t UTF16 [4], *u16;
+            GetKeyboardState (KbdState);
+            int n = ToUnicode (Msg.wParam, MapVirtualKey (Msg.wParam, 0), KbdState, UTF16, 4, 0);//Msg.lParam
+            DebugAddInt ("ToUnicode", n);//####
+            if (n > 0)
+              {
+                u16 = UTF16;
+                int u32 = UTF16Read (&u16);
+                if (u32 > KeyMax)
+                  {
+                    Event->UTF = u32;
+                    Event->Key = KeyUNICODE;
+                  }
+              }
             if (Event->Key & 0xFF00)
               if (Msg.message == WM_KEYDOWN)
                 ShiftState |= Event->Key;
@@ -850,11 +578,11 @@ bool WindowIDMatch (_WindowID WindowID, _Window *Window)
 
 
 // Clipboard
-char* ClipboardGet (void)
+void ClipboardGet (_Window *Window_)
   {
-    char *Res;
+    __Window *Window;
     //
-    Res = nullptr;
+    Window = (__Window *) Window_;
     if (OpenClipboard (nullptr))
       {
         // Retrieve the Clipboard data (specifying that
@@ -866,7 +594,9 @@ char* ClipboardGet (void)
         char *pchData = (char*) GlobalLock (hClipboardData);
         // Set a local CString variable to the data
         // copy to result
-        StrAssignCopy (&Res, pchData);
+        StrAssignCopy (&ClipboardData, pchData);
+        ClipboardWinID = Window->hWindow;
+        ClipboardReady = true;
         // Unlock the global memory.
         GlobalUnlock (hClipboardData);
         // Finally, when finished I simply close the Clipboard
@@ -874,10 +604,9 @@ char* ClipboardGet (void)
         // applications can examine or modify its contents.
         CloseClipboard ();
       }
-    return Res;
   }
 
-bool ClipboardSet (char *Text)
+bool ClipboardSet (_Window *Window, char *Text)
   {
     //char *Text_;
     HGLOBAL hClipboardData;
@@ -909,19 +638,25 @@ bool StartThread (_ThreadFunction ThreadFunction, void *Param)
     HANDLE Thread;
     char St [64], *s;
     //
-    Thread = CreateThread (NULL, 0, ThreadFunction, Param, 0, NULL);
+    Thread = CreateThread (NULL, 0, (LPTHREAD_START_ROUTINE) ThreadFunction, Param, 0, NULL);
     s = St;
     if (Thread == NULL)
       StrCat (&s, "** StartThread ERROR");
     else
       {
         StrCat (&s, "New Thread 0x");
-        NumToHex (&s, Thread);
+        NumToHex (&s, (long long int) Thread);
       }
     *s = 0;
     DebugAdd (St);
     return Thread != NULL;
     // Thread needs to be closed in Windows
+  }
+
+
+void Beep (void)
+  {
+    MessageBeep (MB_ICONEXCLAMATION); //();//(MB_ICONASTERISK);MB_OK
   }
 
 
@@ -934,6 +669,7 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLin
     int res;
     //
     DebugAdd ("Widgets - Start");
+    //
     WinhInstance = hInstance;
     WinhPrevInstance = hPrevInstance;
     //Step 1: Registering the Window Class
@@ -964,5 +700,7 @@ int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLin
     //MessageBox (NULL, "AAAHHHHHH!!!!!!", "Windows Sucks", MB_OK);
     res = main_ (__argc, __argv); //(0, nullptr);
     DebugAdd ("Widgets - Exit");
+    if (ClipboardData)
+      free (ClipboardData);
     return res;
   }

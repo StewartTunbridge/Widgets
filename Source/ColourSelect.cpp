@@ -15,7 +15,7 @@
 class _FormColourSelect: public _Form
   {
     public:
-      _FormColourSelect (char *Title, _Point Position, int InitialValue, _ActionResultInt ActionColour);
+      _FormColourSelect (char *Title, _Point Position, int InitialValue, _ActionResultInt ActionColour, void *Parameter);
       ~_FormColourSelect (void);
       _Slider *sRed, *sGreen, *sBlue;
       _Label *lSample;
@@ -36,7 +36,7 @@ void ActionColourUpdate (_Container *Container)
 void ActionColourOK (_Container *Container)
   {
     if (fColourSelect->ActionColour)
-      fColourSelect->ActionColour (fColourSelect->lSample->Colour);
+      fColourSelect->ActionColour (fColourSelect->lSample->Colour, fColourSelect->Container->DataContainer);
     fColourSelect->Die ();
   }
 
@@ -47,9 +47,6 @@ void ActionColourCancel (_Container *Container)
 void ActionColourMenu (_MenuPopup *mp)
   {
     char Val [10], *v;
-    char *cb;
-    int Col;
-    byte R, G, B;
     //
     if (mp->Selected == 0)   // Copy
       {
@@ -57,39 +54,42 @@ void ActionColourMenu (_MenuPopup *mp)
         StrCat (&v, "0x");
         NumToHex (&v, fColourSelect->ColourValue ());
         *v = 0;
-        ClipboardSet (Val);
+        ClipboardSet (mp->Form->Window, Val);
       }
     else if (mp->Selected == 1)   // Paste
-      {
-        cb = ClipboardGet ();
-        if (cb)
-          {
-            v = cb;
-            if (StrMatch (&v, "0x"))
-              {
-                Col = StrGetHex (&v);
-                ColourToRGB (Col, &R, &G, &B);
-                fColourSelect->sRed->ValueSet (R);
-                fColourSelect->sGreen->ValueSet (G);
-                fColourSelect->sBlue->ValueSet (B);
-                fColourSelect->SampleFill ();
-              }
-            free (cb);
-          }
-      }
+      ClipboardGet (mp->Form->Window);
   }
 
 bool FormColourPreview (_Form *Form, _Event *Event)
   {
+    char *cb;
+    int Col;
+    byte R, G, B;
+    //
     if (Event->Type == etKeyDown)
-      if (Event->Key == KeyEnter)
-        ActionColourOK (NULL);
-      else if (Event->Key == esc)
-        Form->Die ();
+      {
+        if (Event->Key == KeyEnter)
+          ActionColourOK (NULL);
+        else if (Event->Key == esc)
+          Form->Die ();
+      }
+    else if (Event->Type == etClipboard)
+      {
+        cb = ClipboardData;
+        if (StrMatch (&cb, "0x"))
+          {
+            Col = StrGetHex (&cb);
+            ColourToRGB (Col, &R, &G, &B);
+            fColourSelect->sRed->ValueSet (R);
+            fColourSelect->sGreen->ValueSet (G);
+            fColourSelect->sBlue->ValueSet (B);
+            fColourSelect->SampleFill ();
+          }
+      }
     return false;
   }
 
-_FormColourSelect::_FormColourSelect (char *Title, _Point Position, int InitialValue, _ActionResultInt ActionColour_)
+_FormColourSelect::_FormColourSelect (char *Title, _Point Position, int InitialValue, _ActionResultInt ActionColour_, void *Parameter)
                  : _Form (Title, {Position.x, Position.y, 150, 110}, waAlwaysOnTop)// | waBorderless)
   {
     const int sX = 16;
@@ -102,6 +102,7 @@ _FormColourSelect::_FormColourSelect (char *Title, _Point Position, int InitialV
     //
     ColourToRGB (InitialValue, &r, &g, &b);
     ActionColour = ActionColour_;
+    Container->DataContainer = (_Container *) Parameter;
     Container->FontSet (NULL, 14); //NULL
     x = 4;
     y = 4;
@@ -143,8 +144,8 @@ _FormColourSelect::~_FormColourSelect (void)
     fColourSelect = NULL;
   }
 
-void ColourSelect (char *Title, int InitialValue, _ActionResultInt ActionColour_)
+void ColourSelect (char *Title, int InitialValue, _ActionResultInt ActionColour_, void *Parameter)
   {
     if (!fColourSelect)
-      fColourSelect = new _FormColourSelect (Title, MousePos (), InitialValue, ActionColour_);
+      fColourSelect = new _FormColourSelect (Title, MousePos (), InitialValue, ActionColour_, Parameter);
   }

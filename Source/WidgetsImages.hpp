@@ -12,10 +12,12 @@
 // Load / Save BMP, PNG ...
 
 extern _Bitmap* BitmapLoad (_Window *Window, char *Filename);
+extern _Bitmap* BitmapLoadResource (_Window *Window, char *Filename);
 extern bool BitmapSave (_Window *Window, _Bitmap* Bitmap, char *Filename);
 
 extern void BitmapCopy (_Bitmap *Source, _Bitmap *Dest, _Rect rSource, _Point pDest);
-extern void BitmapCopyScale (_Bitmap *Source, _Bitmap *Dest, _Rect rSource, _Rect rDest);
+//extern void BitmapCopyScale (_Bitmap *Source, _Bitmap *Dest, _Rect rSource, _Rect rDest); currently in RenderBitmap(..Rect,Rect)
+
 extern void BitmapFill (_Bitmap *Dest, _Rect Rec, int Pixel);
 
 extern _Point SizeStretch (_Point Size, _Point Space);

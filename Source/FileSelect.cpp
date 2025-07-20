@@ -22,6 +22,7 @@ class _FormFileSelect: public _Form
       _FormFileSelect (char *Title, _Rect Position, bool SaveFile, _ActionResultChars ActionFileSelected_);
       ~_FormFileSelect (void);
       int ColDir;
+      //_ButtonArrow *bUp;
       _Label *lPath;
       _Container *cToolbar;
       _Edit *eNewFilename;
@@ -60,7 +61,7 @@ void _FormFileSelect::ActionSelection (void)
       if (FileSelectFilter [0] == '.')
         StrAddExtension (Res, FileSelectFilter);
     if (ActionFileSelected)
-      ActionFileSelected (Res);
+      ActionFileSelected (Res, Container->DataContainer);
     free (Res);
     Die ();
   }
@@ -70,6 +71,7 @@ void FilesCellDraw (_GridView *Grid, int x, int y, _Rect Rect)
     _FormFileSelect *Form;
     char St [32], *s;
     _Font *f;
+    byte Style;
     //
     Form = (_FormFileSelect *) Grid->Form;
     Rect.x += 4;
@@ -78,6 +80,7 @@ void FilesCellDraw (_GridView *Grid, int x, int y, _Rect Rect)
     f = Grid->FontFind ();
     if (!f)
       return;
+    Style = f->Style;
     if (y == 0)
       {
         f->Style = fsBold;
@@ -85,7 +88,6 @@ void FilesCellDraw (_GridView *Grid, int x, int y, _Rect Rect)
       }
     else
       {
-        f->Style = 0;
         if (ListGoto (Form->Dir, y - 1, &Form->CurrentIndex, &Form->CurrentItem))
           {
             if (Form->CurrentItem->Directory)
@@ -101,6 +103,7 @@ void FilesCellDraw (_GridView *Grid, int x, int y, _Rect Rect)
               Grid->TextOutWrap (Rect, Form->CurrentItem->Name, aLeft, aCenter);
           }
       }
+    f->Style = Style;
   }
 
 char* CellRead (_GridView *Grid, int x, int y)
@@ -116,25 +119,48 @@ char* CellRead (_GridView *Grid, int x, int y)
         }
       else
         if (Form->SaveFile)
-          Form->eNewFilename->TextSet (Form->CurrentItem->Name);
+          {
+            Form->eNewFilename->TextSet (Form->CurrentItem->Name);
+            Form->eNewFilename->FocusSet ();
+          }
         else
           Form->ActionSelection ();
     return NULL;
   }
 
-void ActionFileSelectSave (_Container *Container)
+/*void ActionFileSelectUp (_Container *Button)
   {
     _FormFileSelect *Form;
     //
-    Form = (_FormFileSelect *) Container->Form;
-    if (StrLen (Form->eNewFilename->TextGet ()) > 0)
-      Form->ActionSelection ();
+    Form = (_FormFileSelect *) Button->Form;
+    chdir ("..");
+    Form->DirFill ();
+  }*/
+
+void ActionFileSelectSave (_Container *Container)
+  {
+    if (StrLen (fFileSelect->eNewFilename->TextGet ()) > 0)
+      fFileSelect->ActionSelection ();
+  }
+
+bool FormFileSelectPreview (_Form *Form, _Event *Event)
+  {
+    if (Form->Focused == fFileSelect->eNewFilename)
+      if (Event->Type == etKeyDown)
+        if (Event->Key == KeyEnter)
+          ActionFileSelectSave (NULL);
+        else if (Event->Key == esc)
+          Form->Die ();
+    return false;
   }
 
 _FormFileSelect::_FormFileSelect (char *Title, _Rect Position, bool SaveFile_, _ActionResultChars ActionFileSelected_)
                : _Form (Title, Position, waAlwaysOnTop | waResizable)
   {
-    int y;
+    const int lh = 24;
+    //const int aw = 18;
+    const int th = 32;
+    int x, y;
     //
     ActionFileSelected = ActionFileSelected_;
     Container->FontSet (NULL, 16);
@@ -142,23 +168,33 @@ _FormFileSelect::_FormFileSelect (char *Title, _Rect Position, bool SaveFile_, _
     SaveFile = SaveFile_;
     ColDir = cBlue;
     Container->FontSet (NULL, 14);
+    x = 0;
     y = 0;
-    lPath = new _Label (Container, {4, y, 0, 24}, NULL); y += lPath->Rect.Height;
+    //bUp = new _ButtonArrow (Container, {x, y, aw, lh}, NULL, ActionFileSelectUp, dUp); x += aw;
+    lPath = new _Label (Container, {x, y, 0, lh}, NULL);
     lPath->Colour = ColourAdjust (ColDir, 180);
+    lPath->Margin = 4;
+    y += lh;
+    x = 0;
+    cToolbar = NULL;
+    eNewFilename = NULL;
+    bSave = NULL;
     if (SaveFile)
       {
-        cToolbar = new _Container (Container, {0, y, 0, 32}); y += cToolbar->Rect.Height;
-        eNewFilename = new _Edit (cToolbar, {4, 0, cToolbar->Rect.Width - 64 - 4, 0}, NULL);
-        bSave = new _Button (cToolbar, {cToolbar->Rect.Width - 64, 0, 0, 0}, "Save", ActionFileSelectSave);
-        bSave->RectLock = rlRight;
+        cToolbar = new _Container (Container, {0, y, 0, th}); y += th;
+        eNewFilename = new _Edit (cToolbar, {x, 0, -64, 0}, NULL);
+        bSave = new _Button (cToolbar, {-64, 0, 0, 0}, "Save", ActionFileSelectSave);
+        //bSave->RectLock |= rlRight;
       }
     Grid = new _GridView (Container, {0, y, 0, 0}, NULL, 2, 2, FilesCellDraw);
-    Grid->Locked = {0, 1};
+    //Grid->Locked = {0, 1};
     Grid->Title = {0, 1};
+    //Grid->Selected0 = Grid->Title;
     Grid->Options = (Grid->Options | goSelectLine | goAdjustColumn) & ~goSelectMulti;
     Grid->ActionCellRead = CellRead;
     DirFill ();
     FileSelectActive = true;
+    EventPreview = FormFileSelectPreview;
   }
 
 int DirItemsCompare (_DirItem *Data1, _DirItem *Data2)
@@ -196,9 +232,9 @@ void _FormFileSelect::DirFill (void)
         DirFree (Dir);
         CurrentIndex = -1;
         Dir = NULL;
-        DirRead (&Dir, ReadDirCallBack);
+        DirRead (NULL, &Dir, ReadDirCallBack);
         Dir = ListSort (Dir, DirItemsCompare);
-        Grid->Rows = ListLength (Dir) + 1;
+        Grid->Rows = Max (1, ListLength (Dir) + 1);
         Grid->CellOffset = {0, 0};
       }
     // breaks things Grid->Index0 = Grid->Index1 = Grid->Locked;
@@ -212,7 +248,7 @@ _FormFileSelect::~_FormFileSelect (void)
     FileSelectActive = false;
   }
 
-void FileSelect (char *Title, char *Filter, bool SaveFile, _ActionResultChars ActionFileSelected)   // caller must free Name
+void FileSelect (char *Title, char *Filter, bool SaveFile, _ActionResultChars ActionFileSelected, void *Parameter)   // caller must free Name
   {
     _Point p;
     //
@@ -221,5 +257,6 @@ void FileSelect (char *Title, char *Filter, bool SaveFile, _ActionResultChars Ac
         FileSelectFilter = Filter;
         p = MousePos ();
         fFileSelect = new _FormFileSelect (Title, {p.x, p.y, 300, 400}, SaveFile, ActionFileSelected);
+        fFileSelect->Container->DataContainer = (_Container *) Parameter;
       }
   }

@@ -48,7 +48,7 @@ class _INI : public _Strings
     public:
       _INI (char *Filename);
       ~_INI (void);
-      char *Read (char *Key, char *ValueDefault);
+      char *Read (char *Key, char *ValueDefault = NULL);
       int ReadNum (char *Key, int ValueDefault);
       bool Write (char *Key, char *Value);
       bool WriteNum (char *Key, int Value);

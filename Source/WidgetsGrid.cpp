@@ -31,8 +31,7 @@ void _GridView::DrawCellsAdd (_Point p)
         DrawCells1.x = Max (DrawCells1.x, p.x);
         DrawCells1.y = Max (DrawCells1.y, p.y);
       }
-    Invalidate (true);
-    RenderFlags |= rRedrawPart;
+    Invalidate (false, true);
   }
 
 void _GridView::DrawCellsClear (void)
@@ -42,6 +41,8 @@ void _GridView::DrawCellsClear (void)
 
 bool _GridView::DrawCellsIn (_Point p)
   {
+    if (RenderFlags & rRedraw)
+      return true;
     if (DrawCells0.x < 0)
       return true;
     if (p.x >= DrawCells0.x && p.x <= DrawCells1.x)
@@ -55,25 +56,29 @@ _GridView::_GridView (_Container *Parent, _Rect Rect_, char *Text_, int Columns_
     Columns = Columns_;
     Rows = Rows_;
     Options = goGridLines | goSelectMulti;
+    //Selected = NULL;
     DrawCells0.x = -1;
     ActionCellDraw = ActionCellDraw_;
     ActionCellRead = NULL;
     ActionCellWrite = NULL;
+    ActionCellSelect = NULL;
+    ActionTitleColumnHighlight = NULL;
     Edit = NULL;
     Locked = {1, 1};
     Title = {1, 1};
+    ColumnTitleHighlight = -1;
     Colour = cTextBgnd;
     ColourGrad = -1;
-    Index0 = Index1 = {1, 1};
+    Selected0 = Selected1 = {1, 1};
     CellOffset = {0, 0};
-    CellSizeDefault = TextMeasure (Font, "AgAgAgAg");
+    CellSizeDefault = TextMeasure ("AgAgAgAg");
     CellSizeDefault = {Max (CellSizeDefault.x, 16), Max (CellSizeDefault.y, 4)};
     CellSizeDefault.y = CellSizeDefault.y * 3 / 2;
     CellWidths = NULL;
     CellHeights = NULL;
     ColumnAdjust = -1;
-    if (!Form->KeyFocus)
-      Form->KeyFocus = this;
+    if (!Form->Focused)
+      Form->Focused = this;
   }
 
 _GridView::~_GridView (void)
@@ -86,24 +91,24 @@ _GridView::~_GridView (void)
 
 void _GridView::CellWidthSet (int Column, int Width)
   {
-    ArraySet (&CellWidths, Column, Width);
+    ArraySetInt (&CellWidths, Column, Width);
     Invalidate (true);
   }
 
 int _GridView::CellWidthGet (int Column)
   {
-    return ArrayGet (&CellWidths, Column, CellSizeDefault.x);
+    return ArrayGetInt (&CellWidths, Column, CellSizeDefault.x);
   }
 
 void _GridView::CellHeightSet (int Row, int Height)
   {
-    ArraySet (&CellHeights, Row, Height);
+    ArraySetInt (&CellHeights, Row, Height);
     Invalidate (true);
   }
 
 int _GridView::CellHeightGet (int Row)
   {
-    return ArrayGet (&CellHeights, Row, CellSizeDefault.y);
+    return ArrayGetInt (&CellHeights, Row, CellSizeDefault.y);
   }
 
 _Point _GridView::CellGridPosnToIndex (_Point Position)
@@ -138,10 +143,12 @@ _Point _GridView::CellIndexToGridPosn (_Point Index)
 
 bool _GridView::CellInSelection (_Point Index)
   {
-    if (Index.x >= Min (Index0.x, Index1.x))
-      if (Index.x <= Max (Index0.x, Index1.x))
-        if (Index.y >= Min (Index0.y, Index1.y))
-          if (Index.y <= Max (Index0.y, Index1.y))
+    //if (Selected)
+    //  return (ArrayGetBool (&Selected, Index.y, false));
+    if (Index.x >= Min (Selected0.x, Selected1.x))
+      if (Index.x <= Max (Selected0.x, Selected1.x))
+        if (Index.y >= Min (Selected0.y, Selected1.y))
+          if (Index.y <= Max (Selected0.y, Selected1.y))
             return true;
     return false;
   }
@@ -188,7 +195,7 @@ _Point _GridView::CellAtXY (int x, int y, bool *MidColumn)
     x_ = y_ = 0;
     while (true)
       {
-        Index = CellGridPosnToIndex (Posn);
+        Index = CellGridPosnToIndex (Posn);   // Convert to Screen Cells
         x_ += CellWidthGet (Index.x);
         if (MidColumn)
           if (Abs (x_ - x) < 4)   // within 4 pixels of column gap
@@ -196,7 +203,7 @@ _Point _GridView::CellAtXY (int x, int y, bool *MidColumn)
               mc = true;
               break;
             }
-        if (x_ >= x)
+        if (x_ >= x || Posn.x == Columns - 1)   // We have found our column
           break;
         Posn.x++;
       }
@@ -221,10 +228,9 @@ void _GridView::DrawCustom (void)
     _Rect RectCell;
     int c1, c2;
     int x2;
-    _Font *Font_;
-    byte Style;
+    int Col;
     //
-    /*char s [80], *ps;
+    /*char s [80], *ps; //####
     ps = s;
     StrCat (&ps, "DrawCells: ");
     if (DrawCells0.x < 0)
@@ -239,16 +245,11 @@ void _GridView::DrawCustom (void)
     DebugAdd (s);*/
     //
     //int tick = ClockMS (); //####
-    ColLockBG = Parent->ColourFind ();
+    Col = Colour;
+    ColLockBG = ColourAverage (Parent->ColourFind (), Col);
     ColGrid = ColourAdjust (cForm1, 150);
     ColGridFocus = ColourAdjust (ColourTextFind (), 140);
     ColSelBG = cSelected;
-    Font_ = FontFind ();
-    if (!Font_)
-      return;
-    Style = Font_->Style;
-    if (Colour >= 0 && ColourGrad < 0)   // Solid background
-      Font_->Style |= fsFillBG;
     Posn = {0, 0};
     ScrollBars = 0;
     if (CellOffset.x)
@@ -257,7 +258,6 @@ void _GridView::DrawCustom (void)
       ScrollBars |= sbVert;
     while (true)
       {
-        Font_->ColourBG = ColourFind ();
         Ind = CellGridPosnToIndex (Posn);
         RectCell = CellRect (Posn);
         if (Ind.x >= Columns || RectCell.x >= Rect.Width)
@@ -282,22 +282,25 @@ void _GridView::DrawCustom (void)
             if (Ind.x < Title.x || Ind.y < Title.y)   // Draw Title Cell Background
               {
                 DrawRectangle (RectCell, -1, -1, ColLockBG);
-                DrawBorder (RectCell, bRaised, ColLockBG, 0);
-                Font_->ColourBG = ColLockBG;
+                if (ColumnTitleHighlight == Ind.x)
+                  DrawBorder (RectCell, bLowered, ColLockBG, 0);
+                else
+                  DrawBorder (RectCell, bRaised, ColLockBG, 0);
+                Colour = ColLockBG;
               }
             else
               {
-                //if ((~Options & goSelectLine) && Ind.x == Index1.x && Ind.y == Index1.y && Form->KeyFocus == this)   // Current selection
-                if (Ind.x == Index1.x && Ind.y == Index1.y && Form->KeyFocus == this)
+                //if ((~Options & goSelectLine) && Ind.x == Selected1.x && Ind.y == Selected1.y && Form->KeyFocus == this)   // Current selection
+                if (Ind.x == Selected1.x && Ind.y == Selected1.y && Form->Focused == this)
                   DrawRectangle (RectCell, ColGridFocus, ColGridFocus, ColourFind ());
                 else
                   {
                     if (CellInSelection (Ind))   // Current multiple selection
                       {
                         DrawRectangle (RectCell, -1, -1, ColSelBG);
-                        Font_->ColourBG = ColSelBG;
+                        Colour = ColSelBG;
                       }
-                    else if (RenderFlags & rRedrawPart)
+                    else if (~RenderFlags & rRedraw)
                       DrawRectangle (RectCell, -1, -1, ColourFind ());
                     // Grid lines
                     c1 = c2 = -1;
@@ -322,48 +325,85 @@ void _GridView::DrawCustom (void)
             RectCell.Width -= 2;
             if (ActionCellDraw)
               ActionCellDraw (this, Ind.x, Ind.y, RectCell);
+            _Font *Font_ = FontFind ();
+            if (Font_)
+              Font_->Colour = -1;
+            Colour = Col;
           }
         Posn.x++;
       }
-    Font_->Style = Style;
     ScrollBarsDraw (ScrollBars, CellOffset, {Columns - Locked.x, Rows - Locked.y});
     DrawCellsClear ();
     //DebugAddInt ("Grid Draw time (mS) ", ClockMS () - tick); //####
   }
 
+void _GridView::EditCellInitiate (void)
+  {
+    _Point Posn;
+    char *Data;
+    _Rect Rec;
+    //
+    if (ActionCellRead)
+      {
+        Posn = CellIndexToGridPosn (Selected1);
+        Data = ActionCellRead (this, Selected1.x, Selected1.y);
+        if (Data)
+          {
+            Rec = CellRect (Posn);
+            Edit = new _Edit (this, Rec, Data);
+            Form->Focused = Edit;
+            Form->EventLock = Edit;
+          }
+      }
+  }
+
+void _GridView::ScrollToSelected (void)
+  {
+    _Point CellOffsetOld;
+    //
+    CellOffsetOld = CellOffset;
+    while (Selected1.x - CellOffset.x < Locked.x && CellOffset.x > 0)
+      CellOffset.x--;
+    while (CellRect (CellIndexToGridPosn ({Selected1.x + 1, Selected1.y})).x > Rect.Width)
+      CellOffset.x++;
+    while (Selected1.y - CellOffset.y < Locked.y && CellOffset.y > 0)
+      CellOffset.y--;
+    while (CellRect (CellIndexToGridPosn ({Selected1.x, Selected1.y + 1})).y > Rect.Height)
+      CellOffset.y++;
+    if (CellOffset.x != CellOffsetOld.x || CellOffset.y != CellOffsetOld.y)
+      Invalidate (true);
+  }
+
 bool _GridView::ProcessEventCustom (_Event *Event, _Point Offset)
   {
-    _Point Index0Old, Index1Old;
+    _Point Selected0Old, Selected1Old;
     _Point CellOffsetOld;
     _Point Posn;
     _Point Index;
-    _Rect Rec;
-    int y;
+    int y, w;
     bool MidColumn;
     bool Res;
-    char *Data;
-    bool OK;
     static _Point LastClick = {-1, -1};
     bool DoubleClick;
+    //int i;
     //
     if (Edit)
       {
         if (Event->Type == etKeyDown && (Event->Key == KeyEnter || Event->Key == esc))
           {
-            if (Event->Key == KeyEnter && ActionCellWrite)
-              ActionCellWrite (this, Index1.x, Index1.y, Edit->TextGet ());
+            if (ActionCellWrite)
+              ActionCellWrite (this, Selected1.x, Selected1.y, Edit->TextGet (), Event->Key == esc);
             delete Edit;
             Edit = NULL;
-            Form->KeyFocus = this;
-            Form->EventLock = NULL;
-            DrawCellsAdd (Index1);
+            Form->Focused = this;
+            DrawCellsAdd (Selected1);
           }
         return true;
       }
-    CheckFocus (Event, Offset);
+    FocusCheck (Event, Offset);
     Res = false;
-    Index1Old = Index1;
-    Index0Old = Index0;
+    Selected1Old = Selected1;
+    Selected0Old = Selected0;
     CellOffsetOld = CellOffset;
     DoubleClick = false;
     if (IsEventMine (Event, Offset))   // Either by location OR Forced
@@ -374,42 +414,53 @@ bool _GridView::ProcessEventCustom (_Event *Event, _Point Offset)
           {
             if (Event->Type == etMouseDown && Event->Key == KeyMouseLeft)   // Left Mouse Down
               {
-                DoubleClick = (Event->X == LastClick.x && Event->Y == LastClick.y);
-                LastClick = {Event->X, Event->Y};
                 Posn = CellAtXY (Event->X - Offset.x, Event->Y - Offset.y, &MidColumn);
                 Index = CellGridPosnToIndex (Posn);
-                if (Index.y < Locked.y && MidColumn && (Options & goAdjustColumn))   // Adjusting Column Width?
+                if (Index.x >= Title.x && Index.y >= Title.y)
+                  DoubleClick = (Event->X == LastClick.x && Event->Y == LastClick.y);
+                LastClick = {Event->X, Event->Y};
+                if (Index.y < Title.y && MidColumn && (Options & goAdjustColumn))   // Adjusting Column Width?
                   {
                     ColumnAdjust = Index.x;   // Adjusting a Column
                     ColumnAdjustX = Event->X;
-                    Form->EventLock = this;
                   }
                 else
                   {
                     ColumnAdjust = -1;
-                    if (Index.x < Title.x)
+                    if ((Index.x < Title.x) && (Index.y < Title.y))   // top left corner => select all
+                      {
+                        Selected1 = {0, 0};
+                        Selected0 = {Columns, Rows};
+                      }
+                    else if (Index.x < Title.x)
                       {
                         if (Options & goSelectMulti)   // Select whole rows
                           {
-                            Index0 = {Columns - 1, Index.y};
-                            Index1 = {0, Index.y};
+                            Selected0 = {Columns - 1, Index.y};
+                            Selected1 = {0, Index.y};
                           }
                       }
-                    else if (Index.y < Title.y)
+                    else if (Index.y < Title.y)   // Top Title Line(s)
                       {
-                        if (Options & goSelectMulti)   // Select whole columns
+                        if ((Options & (goSelectMulti | goSelectLine)) == goSelectMulti)   // Select whole columns
                           {
-                            Index0 = {Index.x, Rows - 1};
-                            Index1 = {Index.x, 0};
+                            Selected0 = {Index.x, Rows - 1};
+                            Selected1 = {Index.x, 0};
+                          }
+                        else if (Options & goColumnTitleHighlight)   // change Highlight Column
+                          {
+                            ColumnTitleHighlight = Index.x;
+                            if (ActionTitleColumnHighlight)
+                              ActionTitleColumnHighlight (this, ColumnTitleHighlight);
+                            Invalidate (true);
                           }
                       }
                     else
                       {
-                        Index1 = Index;
+                        Selected1 = Index;
                         if (~Event->ShiftState & KeyShift)
-                          Index0 = Index1;
+                          Selected0 = Selected1;
                       }
-                    Form->EventLock = this;
                   }
               }
             else if (Event->Type == etMouseMove)
@@ -419,96 +470,116 @@ bool _GridView::ProcessEventCustom (_Event *Event, _Point Offset)
                 if (Event->MouseKeys == Bit [KeyMouseLeft - 1])
                   if (ColumnAdjust >= 0)   // Adjusting a column
                     {
-                      CellWidthSet (ColumnAdjust, CellWidthGet (ColumnAdjust) + Event->X - ColumnAdjustX);
+                      w = Max (4, CellWidthGet (ColumnAdjust) + Event->X - ColumnAdjustX);
+                      CellWidthSet (ColumnAdjust, w);
                       ColumnAdjustX = Event->X;
                     }
                   else   // Stretching the selection
-                    Index1 = Index;
+                    Selected1 = Index;
                 LastClick.x = -1;   // not part of a double click
               }
             else if (Event->Type == etMouseUp && Event->Key == KeyMouseLeft)   // Mouse up, stop drag operations
-              {
-                ColumnAdjust = -1;
-                Form->EventLock = NULL;
-              }
+              ColumnAdjust = -1;
             else if (Event->Type == etKeyDown)
               {
-                OK = true;
                 switch ((Event->Key & KeyMax))
                   {
-                    case KeyUp:       Index1.y--; break;
-                    case KeyDown:     Index1.y++; break;
-                    case KeyLeft:     Index1.x--; break;
-                    case KeyRight:    Index1.x++; break;
+                    case KeyUp:       Selected1.y--; break;
+                    case KeyDown:     Selected1.y++; break;
+                    case KeyLeft:     Selected1.x--; break;
+                    case KeyRight:    Selected1.x++; break;
                     case KeyPageUp:   y = 0;
-                                      while (y + 2 * CellHeightGet (Index1.y) < Rect.Height - CellRect (Locked).y)
+                                      while (y + 2 * CellHeightGet (Selected1.y) < Rect.Height - CellRect (Locked).y)
                                         {
-                                          y += CellHeightGet (Index1.y);
-                                          Index1.y--;
+                                          y += CellHeightGet (Selected1.y);
+                                          Selected1.y--;
                                         }
                                       break;
                     case KeyPageDown: y = 0;
-                                      while (y + 2 * CellHeightGet (Index1.y) < Rect.Height - CellRect (Locked).y)
+                                      while (y + 2 * CellHeightGet (Selected1.y) < Rect.Height - CellRect (Locked).y)
                                         {
-                                          y += CellHeightGet (Index1.y);
-                                          Index1.y++;
+                                          y += CellHeightGet (Selected1.y);
+                                          Selected1.y++;
                                         }
                                       break;
-                    case KeyHome:     Index1.y = 0; break;
-                    case KeyEnd:      Index1.y = Rows; break;
+                    case KeyHome:     Selected1.y = 0; break;
+                    case KeyEnd:      Selected1.y = Rows; break;
                     case KeyEnter:
                     case ' ':         DoubleClick = true;
                                       break;
-                    default: OK = false;
+                    default:          Res = false;
                   }
-                if (OK)
-                  if (~Event->ShiftState & KeyShift)
-                    Index0 = Index1;
-                while (Index1.x - CellOffset.x < Locked.x)
-                  CellOffset.x--;
-                while (CellRect (CellIndexToGridPosn ({Index1.x + 1, Index1.y})).x > Rect.Width)
-                  CellOffset.x++;
-                while (Index1.y - CellOffset.y < Locked.y)
-                  CellOffset.y--;
-                while (CellRect (CellIndexToGridPosn ({Index1.x, Index1.y + 1})).y > Rect.Height)
-                  CellOffset.y++;
+                if (Res)
+                  {
+                    if (~Event->ShiftState & KeyShift)
+                      Selected0 = Selected1;
+                    while (Selected1.x - CellOffset.x < Locked.x && CellOffset.x > 0)
+                      CellOffset.x--;
+                    while (CellRect (CellIndexToGridPosn ({Selected1.x + 1, Selected1.y})).x > Rect.Width)
+                      CellOffset.x++;
+                    while (Selected1.y - CellOffset.y < Locked.y && CellOffset.y > 0)
+                      CellOffset.y--;
+                    while (CellRect (CellIndexToGridPosn ({Selected1.x, Selected1.y + 1})).y > Rect.Height)
+                      CellOffset.y++;
+                  }
               }
           }
-      }
-    Index1.x = Limit (Index1.x, Title.x, Columns - 1);
-    Index1.y = Limit (Index1.y, Title.y, Rows - 1);
-    if (~Options & goSelectMulti)
-      Index0 = Index1;
-    if (Options & goSelectLine)
-      {
-        Index0.x = Columns - 1;
-        Index1.x = Title.x;
-      }
-    if (DoubleClick)
-      if (ActionCellRead)
-        {
-          Posn = CellIndexToGridPosn (Index1);
-          Data = ActionCellRead (this, Index1.x, Index1.y);
-          if (Data)
-            {
-              Rec = CellRect (Posn);
-              Edit = new _Edit (this, Rec, Data);
-              free (Data);
-              Form->KeyFocus = Edit;
-              Form->EventLock = Edit;
-            }
-        }
-    CellOffset.x = Limit (CellOffset.x, 0, Columns - Locked.x - 1);
-    CellOffset.y = Limit (CellOffset.y, 0, Rows - Locked.y - 1);
-    if (CellOffset.x != CellOffsetOld.x || CellOffset.y != CellOffsetOld.y)
-      Invalidate (true);
-    else if ((Index1.x != Index1Old.x || Index1.y != Index1Old.y) || (Index0.x != Index0Old.x || Index0.y != Index0Old.y))
-      {
-        DrawCellsAdd (Index0);
-        DrawCellsAdd (Index1);
-        DrawCellsAdd (Index0Old);
-        DrawCellsAdd (Index1Old);
+        Selected1.x = Limit (Selected1.x, Title.x, Columns - 1);
+        Selected1.y = Limit (Selected1.y, Title.y, Rows - 1);
+        if (~Options & goSelectMulti)
+          Selected0 = Selected1;
+        if (Options & goSelectLine)
+          {
+            Selected0.x = Columns - 1;
+            Selected1.x = Title.x;
+          }
+        if (DoubleClick)
+          EditCellInitiate ();
+        if (Columns <= Title.x)
+          Columns = Title.x + 1;
+        if (Rows <= Title.y)
+          Rows = Title.y + 1;
+        CellOffset.x = Limit (CellOffset.x, 0, Columns - Locked.x - 1);
+        CellOffset.y = Limit (CellOffset.y, 0, Rows - Locked.y - 1);
+        if (Selected1.x != Selected1Old.x || Selected1.y != Selected1Old.y)
+          if (ActionCellSelect)
+            ActionCellSelect (this, Selected1.x, Selected1.y);
+        if (CellOffset.x != CellOffsetOld.x || CellOffset.y != CellOffsetOld.y)   // scrolling whole grid
+          Invalidate (true);
+        else   // redrawing part ofthe grid
+          if ((Selected1.x != Selected1Old.x || Selected1.y != Selected1Old.y) || (Selected0.x != Selected0Old.x || Selected0.y != Selected0Old.y))   // Selection has changed
+            /*
+              {
+                DrawCellsAdd (Selected1Old);
+                if ((Options & (goSelectMulti | goSelectLine) == (goSelectMulti | goSelectLine)) && (Event->ShiftState & KeyCntl))   // multi select + whole lines AND Cntrl pressed
+                  {
+                    bool SelNew = !ArrayGetBool (&Selected, Selected0.y, false);   // so toggle the selected items
+                    for (i = Min (Selected0.y, Selected1.y); i <= Max (Selected0.y, Selected1.y); i++)
+                      {
+                        ArraySetBool (&Selected, i, SelNew);
+                        DrawCellsAdd ({0, i});
+                        DrawCellsAdd ({Columns - 1, i});
+                      }
+                  }
+                else   // no Cntrl pressed
+                  if (Selected)   // using individual selected lines
+                    {
+                      for (i = 0; i < Rows; i++)
+                        if (ArrayGetBool (&Selected, i, false) != ValueWithin (i, Selected0.y, Selected1.y))
+                          {
+                            ArraySetBool (&Selected, i, ValueWithin (i, Selected0.y, Selected1.y));
+                            DrawCellsAdd ({0, i});
+                            DrawCellsAdd ({Columns - 1, i});
+                          }
+                    }
+                  else*/
+                      {
+                        DrawCellsAdd (Selected0);
+                        DrawCellsAdd (Selected1);
+                        DrawCellsAdd (Selected0Old);
+                        DrawCellsAdd (Selected1Old);
+                      }
+              //}
       }
     return Res;
   }
-

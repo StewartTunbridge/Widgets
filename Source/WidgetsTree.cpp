@@ -9,7 +9,7 @@
 #include "WidgetsDriver.hpp"
 #include "WidgetsTree.hpp"
 
-extern void DebugAddError (const char *Tag);
+#define TreeMargin 4
 
 _TreeViewNode::_TreeViewNode (char *Text_, void *Data_)
   {
@@ -23,12 +23,12 @@ _TreeViewNode::_TreeViewNode (char *Text_, void *Data_)
     Expanded = false;
   }
 
-_TreeViewNode* _TreeViewNode::AddNode (bool Child, char *Text_, void *Data_)
+_TreeViewNode* _TreeViewNode::NodeAdd (bool Child, char *Text_, void *Data_)
   {
     _TreeViewNode *NewNode; //, *Sibling;
     //
     NewNode = new _TreeViewNode (Text_, Data_);
-    if (Child | !Parent)   // No parent => no siblings
+    if (Child || !Parent)   // No parent => no siblings
       {
         NewNode->Parent = this;
         ListAdd (NewNode, &Children);
@@ -49,13 +49,12 @@ _TreeViewNode::~_TreeViewNode ()
     // Unlink from family
     if (Parent)
       ListRemove (this, &(Parent->Children));
-    else
-      ListRemove (this, (_TreeViewNode **) nullptr);
-    // Free dynamic variable
+    // Warn about Data
+    if (Data)
+      DebugAddS ("Deleting TreeViewNode with Data:", Text);
+    // Free dynamic Text
     if (Text)
       free (Text);
-    if (Data)
-      free (Data);
   }
 
 _TreeViewNode* _TreeViewNode::NodeNext (int *x)
@@ -83,6 +82,20 @@ _TreeViewNode* _TreeViewNode::NodeNext (int *x)
       }
   }
 
+_TreeViewNode* _TreeViewNode::NodeFind (char *Txt)
+  {
+    _TreeViewNode *n;
+    //
+    n = Children;
+    while (n)
+      {
+        if (StrSame (n->Text, Txt))
+          return (n);
+        n = n->Next;
+      }
+    return NULL;
+  }
+
 int _TreeViewNode::Depth (void)
   {
     int Res;
@@ -100,15 +113,18 @@ int _TreeViewNode::Depth (void)
 
 class _TreeView;
 
-_TreeView::_TreeView (_Container *Parent, _Rect Rect_) : _Container (Parent, Rect_, NULL)
+_TreeView::_TreeView (_Container *Parent, _Rect Rect_, _Action Action_) : _Container (Parent, Rect_, NULL)
   {
     _Point sz;
     //
-    Nodes = new _TreeViewNode ("root", nullptr);
+    Action = Action_;
+    Edit = NULL;
+    Options = 0x00;
+    Nodes = new _TreeViewNode ("(root)", nullptr);
     Selected = Nodes; // nullptr;
-    //Top = 0;
-    sz = TextMeasure (Font, "Ag");
-    NodeHeight = sz.y * 3 / 2;
+    sz = TextMeasure ("Ag");
+    NodeHeight = sz.y * 4 / 3;
+    Indent = NodeHeight / 2;
   }
 
 _TreeView::~_TreeView (void)
@@ -139,12 +155,27 @@ void _TreeView::Check (void)
       }
   }
 
-int _TreeView::FindNode (_TreeViewNode *Target)
+void _TreeView::NodeEdit (void)
+  {
+    _Rect Rec;
+    _Point Pos;
+    //
+    if (Selected)
+      {
+        Pos = ScrollToSelected ();
+        Rec = {Pos.x - Scroll.x + Indent, Pos.y - Scroll.y, - ScrollBarWidth, NodeHeight};
+        Edit = new _Edit (this, Rec, Selected->Text);
+        Form->Focused = Edit;
+        Form->EventLock = Edit;
+      }
+  }
+
+int _TreeView::NodeFind (_TreeViewNode *Target)
   {
     _TreeViewNode *Node;
     int Item;
     //
-    Node = Nodes;
+    Node = Nodes->Children;
     Item = 0;
     while (true)
       {
@@ -163,7 +194,7 @@ _TreeViewNode* _TreeView::FindItem (int Target)
     _TreeViewNode *Node, *Node_;
     int Item;
     //
-    Node = Nodes;
+    Node = Nodes->Children;
     Item = 0;
     while (true)
       {
@@ -178,26 +209,37 @@ _TreeViewNode* _TreeView::FindItem (int Target)
     return nullptr;
   }
 
-int _TreeView::NodesDisplayable (void)
+_Point _TreeView::ScrollToSelected (void)   // adjust Scroll to show Selected Node
   {
+    _Point Pos;
     _TreeViewNode *Node;
-    int n;
+    _Point ScrollOld;
     //
-    Node = Nodes;
-    n = 0;
-    while (Node)
+    Pos = {0, 0};
+    Node = Nodes->Children;
+    while (true)
       {
-        Node = Node->NodeNext (nullptr);
-        n++;
+        if (Node == nullptr)
+          break;
+        if (Node == Selected)
+          break;
+        Pos.y++;
+        Node = Node->NodeNext (&Pos.x);
       }
-    return n;
-  }
-
-#define TreeMargin 4
-
-void _TreeView::SetSize ()
-  {
-    SizeVirtual = {Rect.Width * 2, NodeHeight * NodesDisplayable ()};
+    Pos.x *= Indent;
+    Pos.y *= NodeHeight;
+    ScrollOld = Scroll;
+    if (Pos.y < Scroll.y)
+      Scroll.y = Pos.y;
+    if (Pos.y + NodeHeight - Scroll.y > Rect.Height - ScrollBarWidth)
+      Scroll.y = Pos.y + NodeHeight - Rect.Height + ScrollBarWidth;
+    if (Pos.x < Scroll.x)
+      Scroll.x = Pos.x;
+    if (Pos.x + Indent + 64 - Scroll.x > Rect.Width - ScrollBarWidth)
+      Scroll.x = Pos.x + Indent + 64 - Rect.Width + ScrollBarWidth;
+    if (Scroll.x != ScrollOld.x || Scroll.y != ScrollOld.y)
+      Invalidate (true);
+    return Pos;
   }
 
 void _TreeView::DrawCustom (void)
@@ -205,49 +247,51 @@ void _TreeView::DrawCustom (void)
     int x, y;
     int x_;
     _TreeViewNode *Node;
-    _Rect Rec1, Rec2;
-    _Font *Font;
+    _Rect Rec;
     int cText, cFocus;
     int h;
+    _Point ts;
+    int MaxX;
+    int Col;
     //
-    Font = FontFind ();
+    MaxX = 0;
     cText = ColourTextFind ();
     cFocus = ColourAdjust (cText, 140);
     x = 0;
     y = 0;
-    Node = Nodes;
-    SetSize ();
+    Col = Colour;
+    Node = Nodes->Children;
+    SizeVirtual.x = Rect.Width;
     while (true)
       {
         if (Node == nullptr)
           break;
-        if (y - Scroll.y > Rect.Height)
-          break;
-        if (y - Scroll.y + NodeHeight >= 0)
+        if (y - Scroll.y + NodeHeight >= 0 && y - Scroll.y < Rect.Height)   // on screen
           {
-            x_ = x * NodeHeight;
-            Rec1 = {x_ + NodeHeight, y, Rect.Width, NodeHeight};
-            Rec2.x = x_ + NodeHeight + TreeMargin;
-            Rec2.y = y + NodeHeight / 6;
-            Rec2.Width = Rect.Width - Rec2.x;
-            Rec2.Height = NodeHeight;
+            ts = TextMeasure (Node->Text);
+            x_ = x * Indent;
+            Rec = {x_ + Indent, y, ts.x + 2 * TreeMargin, NodeHeight};
+            MaxX = Max (MaxX, x_ + Indent + TreeMargin + ts.x);
             if (Node == Selected)
-              if (Form->KeyFocus == this)
-                DrawRectangle (Rec1, cFocus, cFocus, -1);
+              if (Form->Focused == this)
+                DrawRectangle (Rec, cFocus, cFocus, -1);
               else
                 {
-                  DrawRectangle (Rec1, -1, -1, cSelected);
-                  Font->ColourBG = cSelected;
+                  DrawRectangle (Rec, -1, -1, cSelected);
+                  Colour = cSelected;
                 }
-            TextOutAligned (NULL, Rec2, Node->Text, aLeft, aLeft);
-            Font->ColourBG = -1;
+            TextOutAligned (AddMargin (Rec, {TreeMargin, 0}), Node->Text, aLeft, aCenter);
+            Colour = Col;
             h = NodeHeight / 3;
             if (Node->Children)
-              DrawArrow ({x_ + h, y + h, h, h}, Node->Expanded ? dDown : dRight);
+              DrawArrow ({x_, y + h, h, h}, Node->Expanded ? dDown : dRight);
           }
         y += NodeHeight;
         Node = Node->NodeNext (&x);
       }
+    if (MaxX > SizeVirtual.x)
+      SizeVirtual.x = MaxX;
+    SizeVirtual.y = y;
   }
 
 bool _TreeView::ProcessEventCustom (_Event *Event, _Point Offset)
@@ -258,67 +302,83 @@ bool _TreeView::ProcessEventCustom (_Event *Event, _Point Offset)
     _TreeViewNode *SelectedOld;
     int Item;
     //
-    CheckFocus (Event, Offset);
-    Res = false;
-    SelectedOld = Selected;
-    if (IsEventMine (Event, Offset))
+    if (Edit)
       {
-        Res = true;
-        if (Event->Type == etMouseDown)
+        if (Event->Type == etKeyDown && (Event->Key == KeyEnter || Event->Key == esc))
           {
-            StationaryClicks++;
-            Offset.y -= Scroll.y;
-            Res = true;
-            if (Event->Key == KeyMouseLeft)
-              {
-                Selected = FindItem ((Event->Y - Offset.y) / NodeHeight);
-                if ((Event->X - Offset.x) / NodeHeight <= Selected->Depth () || StationaryClicks >= 2)
-                  Selected->Expanded = !Selected->Expanded;
-                SetSize ();
-                Invalidate (true);
-              }
-          }
-        else if (Event->Type == etMouseMove)
-          StationaryClicks = 0;
-        else if (Event->Type == etKeyDown)
-          {
-            Move = 0;
-            switch ((Event->Key & KeyMax))
-              {
-                case KeyUp:       Move = -1; break;
-                case KeyDown:     Move = +1; break;
-                case KeyLeft:     if (Selected->Expanded)
-                                    Selected->Expanded = false;
-                                  else
-                                    Selected = Selected->Parent;
-                                  break;
-                case KeyRight:    Selected->Expanded = true; break;
-                case KeyPageUp:   Move = - Rect.Height / NodeHeight; break;
-                case KeyPageDown: Move = Rect.Height / NodeHeight; break;
-                case KeyHome:     Selected = Nodes; break;
-                case KeyEnd:      Move = IntMax/2; break;
-                case KeyEnter:
-                case ' ':         Selected->Expanded = !Selected->Expanded; //DoubleClick = true;
-                                  break;
-              }
-            Item = FindNode (Selected);
-            Item += Move;
-            Selected = FindItem (Max (Item, 0));
-            if (!Selected)
-              Selected = Nodes;
-            Item = FindNode (Selected);
-            // Out of sight?
-            if (Item * NodeHeight < Scroll.y)
-              Scroll.y = Item * NodeHeight;
-            if ((Item + 1) * NodeHeight - Scroll.y > Rect.Height - ScrollBarWidth)
-              Scroll.y = (Item + 1) * NodeHeight - Rect.Height + ScrollBarWidth;
-            SetSize ();
+            if (ActionNodeEditWrite)
+              ActionNodeEditWrite (this, Edit->TextGet (), Event->Key == esc);
+            delete Edit;
+            Edit = NULL;
+            Form->Focused = this;
             Invalidate (true);
           }
+        return true;
       }
+    FocusCheck (Event, Offset);
+    Res = false;
+    if (NodeHeight == 0)
+      return false;
+    SelectedOld = Selected;
+    if (IsEventMine (Event, Offset))
+      if (Event->Type == etMouseDown && Event->Key == KeyMouseLeft)
+        {
+          Res = true;
+          StationaryClicks++;
+          Offset.y -= Scroll.y;
+          Selected = FindItem ((Event->Y - Offset.y) / NodeHeight);
+          if ((Event->X - Offset.x) / Indent <= Selected->Depth () || StationaryClicks >= 2)
+            Selected->Expanded = !Selected->Expanded;
+          Invalidate (true);
+        }
+      else if (Event->Type == etMouseMove)
+        {
+          Res = true;
+          StationaryClicks = 0;
+          Offset.y -= Scroll.y;
+          if (Event->MouseKeys & KeyMouseLeft)
+            Selected = FindItem ((Event->Y - Offset.y) / NodeHeight);
+        }
+      else if (Event->Type == etKeyDown)
+        {
+          Res = true;
+          Move = 0;
+          switch ((Event->Key & KeyMax))
+            {
+              case KeyUp:       Move = -1; break;
+              case KeyDown:     Move = +1; break;
+              case KeyLeft:     if (Selected->Expanded)
+                                  Selected->Expanded = false;
+                                else if (Selected->Parent != Nodes)
+                                  Selected = Selected->Parent;
+                                break;
+              case KeyRight:    Selected->Expanded = true; break;
+              case KeyPageUp:   Move = - Rect.Height / NodeHeight; break;
+              case KeyPageDown: Move = Rect.Height / NodeHeight; break;
+              case KeyHome:     Selected = Nodes; break;
+              case KeyEnd:      Move = IntMax/2; break;
+              case KeyEnter:
+              case ' ':         Selected->Expanded = !Selected->Expanded; //DoubleClick = true;
+                                break;
+              default:          Res = false;
+            }
+          if (Res)
+            {
+              Item = NodeFind (Selected);
+              Item += Move;
+              Selected = FindItem (Max (Item, 0));
+              if (!Selected)
+                Selected = Nodes;
+              ScrollToSelected ();   // Out of sight?
+              Invalidate (true);
+            }
+        }
     if (Selected != SelectedOld)
-      if (Action)
-        Action (this);
+      {
+        Invalidate (true);
+        if (Action)
+          Action (this);
+      }
     return Res;
   }
 

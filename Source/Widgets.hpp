@@ -26,6 +26,7 @@ extern void DebugAddInt (const char *St, int n);   // "
 extern void DebugAddHex (const char *St, int n);   // "
 extern void DebugAddP (const char *St, _Point p);   // "
 extern void DebugAddR (const char *St, _Rect *r);   // "
+extern void DebugAddError (const char* Message);   // "
 
 extern _Rect AddMargin (_Rect Rect, _Point Margin);
 
@@ -37,20 +38,6 @@ enum _Align {aLeft, aRight, aCenter};   // Horizontal & Vertical Text Alignment
 // BUTTON STYLE
 typedef enum {bsNormal, bsFlat, bsSimple} _ButtonStyle;
 extern _ButtonStyle ButtonStyle;
-
-// COLOUR CONSTANTS
-extern const int cBlack;
-extern const int cWhite;
-extern const int cRed;
-extern const int cGreen;
-extern const int cBlue;
-extern const int cAqua;
-extern const int cOrange;
-extern const int cGray;
-extern const int cYellow;
-extern const int cPink;
-extern const int cBrown;
-extern const int cMaroon;
 
 // THEME
 extern int cForm1;
@@ -72,7 +59,7 @@ extern char *FontFileDefault;
 extern int FontSizeDefault;
 extern char *TextCallBackCursor;
 extern _Point CursorLocation;
-extern char *TextCallBackSelection [2];
+extern char *TextCallBackSelected [2];
 
 enum _Direction {dLeft, dUp, dRight, dDown};
 enum _Border {bNone, bRaised, bLowered, bMote};
@@ -91,17 +78,21 @@ class _Form //: public _List
       _Form *Next, *Prev;   // Next _Form in the list (see FormList)
       _Window *Window;   //The window we'll be rendering to
       _Container *Container;
-      _Container *KeyFocus;
-      _Container *EventLock;
-      _Texture *WindowTexture;
+      _Container *Focused;   // Container with keyboard focus
+      _Container *EventMouseLock;   // Containers lock focus when mouse key pressed
+      _Container *EventLock;   // Containers lock focus when mouse key pressed
+      _Bitmap *Image;
+      _Point RedrawZone [2];
       bool ReRender;
-      char KeyPress;   // Keyboard input from soft keyboards (0 = none)
+      //char KeyPress;   // Keyboard input from soft keyboards (0 = none)
+      int *KeySeries;
       byte Alpha;
       _FormEventPreview EventPreview;
       bool DieFlag;
       void Clear (void);
       bool SaveScreenShot (char *Filename);
       void Die (void);
+      void RedrawZoneAdd (_Container *Container, _Point Offset);
       _Form (char *Title, _Rect Position, byte WindowAttribute = 0);   // Create Form
       virtual ~_Form (void);   // Manually remove Form (happens on window close)
   };
@@ -141,7 +132,7 @@ class _Container
   {
     public:
       _Container *Next, *Prev;
-      _Bitmap *Bitmap;
+      _Bitmap *Bitmap;   // Resource
     protected:
       byte RenderFlags;   // ####See bRender*
       char *Text;   // ####Used by descendants for ...
@@ -155,9 +146,9 @@ class _Container
       void TextOutWrap_ (_Rect Rect, char *Text, _Align Align, int *PosY, bool Write);   // TextOut multiline wordwrapped. '\n'=NewLine '\t'=Split
     public:
       _Font *Font;
-      _Texture* Texture;
+      _Bitmap* Image;
       byte Alpha;
-      _Point TextMeasure (_Font *Font, char *Text);
+      _Point TextMeasure (char *Text);
       _Form *Form;   // _Form associated with this. (ultimate Parent)
       _Container *Parent;   // Owner
       _Rect Rect;   // Dimensions
@@ -178,28 +169,29 @@ class _Container
       int DataInt;
       //
       _Container (_Container *Parent_, _Rect Rect_, char *Text_ = NULL, int PagingTime_ = 0, int PagingTransitionTime_ = 0, _PagingTransitionMode PagingTransitionMode_ = ptmBlend);
-        // Rect_: To use Parent Width/Height specify 0. This also sets bits RectLock
+        // Rect: if x / y < 0, posn is relative to Parent Width / Height
+        //       if Width / Height <= 0, size is relative to Parent Width / Height AND suitable RectLock bits will be set
       virtual ~_Container (void);
       bool Resize (int Width, int Height);
       char* TextGet (void);   // Get the Container's Text
       void TextSet (char *St);   // Set the Container's Text
-      void Invalidate (bool ReDraw);
+      void Invalidate (bool ReDraw, bool ReDrawPart = false);
       void InvalidateAll (bool Redraw);
       bool IsVisible (void);
       void VisibleSet (bool Value);
       bool IsEnabled (void);
       void EnabledSet (bool Enabled_);
       //
-      bool FontSet (const char *FontFile, int Size, byte Style = 0x00);
+      bool FontSet (char *FontFile, int Size, byte Style = 0x00);
       //
       int ColourFind (void);
       int ColourTextFind (void);
       _Font* FontFind (void);
       _Bitmap* BitmapFind (void);
-      bool RenderTarget_ (_Texture *Texture, _Point Offset, int Colour, _Rect Clip);
-      void TextOutAligned (_Font *Font, _Rect Rect, char *Text, _Align Align, _Align AlignVert);   // Find Font, Draw Text
-      void TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert);
-      void TextOutWrapInverse (_Rect Rect, char *St, _Align Align, _Point Margin);   // Inverse for Menus etc
+      void TextOutAligned (_Rect Rect, char *Text, _Align Align, _Align AlignVert);   // Find Font, Draw Text
+      void TextOutAlignedN (_Rect Rect_, char *St, _Align Align, int n);
+      int TextOutWrap (_Rect Rect, char *Text, _Align Align, _Align AlignVert);
+      void TextOutInverse (_Rect Rect, char *St, int Margin);   // Inverse for Menus etc
       int BorderColourTL (int ColourReference);
       int BorderColourBR (int ColourReference);
       void DrawBorder (_Rect Rect, _Border Border, int ColourReference, int Indent = 0);
@@ -215,6 +207,7 @@ class _Container
       void DrawArrow (_Rect Rect_, _Direction Direction);   // Arrow: Direction: Left, Up, Right, Down
       void DrawCircle (int cx, int cy, int radius, int ColourEdge, int ColourFill = -1, int Width = 1, int Bevel = 0);
       void DrawRadius (int x, int y, int Rad1, int Rad2, int Angle, int Colour, int Width);
+      void DrawKnerl (_Rect Rect, bool Vert);
       void DrawScrollBar (bool Vert, int Bar1, int Bar2);
       void ScrollBarsDraw (byte Bars, _Point Value, _Point Content);
       bool ScrollBarsEvent (_Event *Event, _Point Offset, byte Bars, _Point Content, _Point *Scroll);
@@ -227,11 +220,11 @@ class _Container
       //
       //_EventPreview EventPreview;
       void Draw (bool Force, _Point Offset);
-      void Render1 (bool RenderAll, int DestX, int DestY, byte AlphaOffset);
-      void Render2 (int DestX, int DestY);
+      void RenderContainers (bool RenderAll, _Point Dest, byte AlphaOffset);
       void Die (void);
       //
-      bool CheckFocus (_Event *Event, _Point Offset);
+      bool FocusCheck (_Event *Event, _Point Offset);
+      void FocusSet (void);   // Give Focus to a _Container
       bool ProcessEvent (_Event *Event, _Point Offset);   // returns true when actioned
       void Poll (void);
     protected:
@@ -272,6 +265,7 @@ class _CheckBox: public _Button
     public:
       _CheckBox (_Container *Parent, _Rect Rect, char *Text_, _Action Action = NULL);
       virtual void DrawCustom (void);
+      bool StyleCross;
   };
 
 class _ButtonRound: public _Button
@@ -303,6 +297,7 @@ class _Label: public _Container
       _Align Align;   // Horizontal Text Alignment
       _Align AlignVert;   // Vertical Text Alignment. aLeft == Top, aRight == Bottom
       _Border Border;
+      int Margin;
       //
       _Label (_Container *Parent, _Rect Rect, char *Text_, _Align Align_ = aLeft, _Border Border_ = bNone);
       virtual void DrawCustom (void);
@@ -378,12 +373,12 @@ class _EditNumber: public _Container
   {
     protected:
       int ColourFontBgnd;
-      int Max;
+      int Min, Max;
       _Action Action;
       bool NewFocus;
       virtual bool ProcessEventCustom (_Event *Event, _Point Offset);
     public:
-      _EditNumber (_Container *Parent, _Rect Rect, char *Text, int Max, _Action Action = NULL);
+      _EditNumber (_Container *Parent, _Rect Rect, char *Text, int Min, int Max, _Action Action = NULL);
       virtual void DrawCustom (void);
       void ValueSet (int Val);
       int Value;
@@ -444,8 +439,6 @@ class _Image: public _Container
       virtual void DrawCustom (void);
     public:
       _Image (_Container *Parent, _Rect Rect, char *Filename, bool Transparent = true);
-      ~_Image (void);
-      //_Bitmap *Bitmap;
       _Stretch Stretch;
       _Align Align;
       _Align AlignVert;
@@ -462,11 +455,11 @@ class _SelectionList: public _Container
       char *List;
       int ListSize;
       int ListDisplayed;
-      _Align Align;
       int Selected;
       _Action Action;  // Callback function when Value changes
       //
       _SelectionList (_Container *Parent, _Rect Rect, char *Text_, _Action Action);
+    ~_SelectionList (void);
       virtual void DrawCustom (void);
       virtual bool ProcessEventCustom (_Event *Event, _Point Offset);
   };
@@ -520,13 +513,22 @@ class _Tabs: public _Container
   {
     public:
       int Selected;
-      _Action Action;  // Callback function when Down changes
+      _Action Action;  // Callback function when Selection changes
       //
       _Tabs (_Container *Parent, _Rect Rect, char *Text_, _Action Action = nullptr);
       virtual void DrawCustom (void);
       virtual bool ProcessEventCustom (_Event *Event, _Point Offset);
   };
 
+class _Splitter: public _Container
+  {
+    protected:
+      _Point Reference;
+      void DrawCustom (void);
+      bool ProcessEventCustom (_Event *Event, _Point Offset);
+    public:
+      _Splitter (_Container *Parent, _Rect Rect);
+  };
 
 //////////////////////////////////////////////////////////////////////////////
 

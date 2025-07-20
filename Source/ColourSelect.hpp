@@ -9,6 +9,6 @@
 // If one is selected with OK, ActionColour will be called with the result
 // On either OK or Cancel, form is deleted
 
-typedef void (*_ActionResultInt) (int Result);
+typedef void (*_ActionResultInt) (int Result, void *Parameter);
 
-extern void ColourSelect (char *Title, int InitialValue, _ActionResultInt ActionColourSelected);
+extern void ColourSelect (char *Title, int InitialValue, _ActionResultInt ActionColourSelected, void *Parameter = NULL);

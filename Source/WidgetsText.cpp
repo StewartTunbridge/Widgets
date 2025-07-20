@@ -15,6 +15,13 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
+// From Widget.cpp
+extern void RenderDrawLine (int Colour, int x1, int y1, int x2, int y2);
+extern void RenderFillRect (_Rect Rect, int Colour);
+extern void RenderDrawPixelAlpha (int x, int y, int Colour, byte Alpha);
+extern _Point TargetBitmapScroll;
+extern _Point TargetBitmapSize;
+
 int ItalicSlope = 10;
 bool ForceMonochrome = false;
 
@@ -25,6 +32,7 @@ extern void DebugAddS (const char *s1, const char *s2);
 extern void DebugAddInt (const char *St, int i);
 extern void DebugAddP (const char *St, _Point p);
 extern void DebugAddR (const char *St, _Rect *r);
+extern void DebugAddHex (const char *St, int p);
 
 _TextCallBack *TextCallBack = nullptr;
 
@@ -93,21 +101,41 @@ int GlyphWidth (_Font *Font, FT_GlyphSlot Glyph)
   }
 */
 
+bool TextProcessSpecial (_Window *Window, char **Text, _Font *Font, _Point *Posn, _Point *Size)
+  {
+    char *t;
+    int TabSize;
+    //
+    if (TextCallBack)
+      if (TextCallBack (Window, Text, Font, Posn, Size))
+        return true;
+    t = *Text;
+    if (*t == tab)
+      {
+        (*Text)++;
+        TabSize = Font->YAdvance * 4;
+        if (Posn)
+          Posn->x = ((Posn->x / TabSize) + 1) * TabSize;
+        if (Size)
+          Size->x = ((Size->x / TabSize) + 1) * TabSize;
+        return true;
+      }
+    return false;
+  }
+
 _Point FreeTypeMeasureString (char *St, _Font *Font, int *Index = NULL, int Search = -1)   // Size of string
   {
     _Point Size;
-    char *St_, *St__;;
-    int Ch_;
+    char *St_, *St__;
+    int Ch;
     FT_UInt GlyphIndex;
     int dx;
     FT_Face Face;
-    int x_, x__;
+    int x;
     //
     Face = (FT_Face) Font->Typeface;
     FT_Select_Charmap (Face , ft_encoding_unicode);
-    //FT_Error err =  FT_Set_Pixel_Sizes (Face, 20, 20);//####
-    St__ = St_ = St;
-    x__ = x_ = 0;
+    St_ = St;
     Size = {0, 0};
     if (Font && St)
       {
@@ -116,44 +144,36 @@ _Point FreeTypeMeasureString (char *St, _Font *Font, int *Index = NULL, int Sear
         Size.y = Font->YAdvance;
         while (true)
           {
-            if (TextCallBack)
-              TextCallBack (0, &St_, Font, NULL, &Size);
-            dx = CharWidthAdjustment (Font);
-            if ((byte) *St_ < ' ')
-              break;
+            x = Size.x;
             St__ = St_;
-            x__ = Size.x;
-            Ch_ = UTF8Read (&St_);   // Read UTF8 character
-            if (Ch_ < 0)   // Invalid UTF8 character
+            if (!TextProcessSpecial (0, &St_, Font, NULL, &Size))
+              {
+                if ((byte) *St_ < ' ')
+                  break;
+                dx = CharWidthAdjustment (Font);
+                Ch = UTF8Read (&St_);   // Read UTF8 character
+                //if (Ch > 0x7F)   // Unicodde
+                //  DebugAddHex ("UTFRead", Ch);//####
+                if (Ch < 0)   // Invalid UTF8 character
+                  break;
+                GlyphIndex = FT_Get_Char_Index (Face, Ch);
+                if (FT_Load_Glyph (Face, GlyphIndex, LoadMode (Font->Style)))
+                  break;
+                Size.x += dx + Face->glyph->metrics.horiAdvance / FontScale; //GlyphWidth (Font, Face->glyph)
+              }
+            if (Search >= 0 && (Size.x + x) / 2 >= Search)
               break;
-            GlyphIndex = FT_Get_Char_Index (Face, Ch_);
-            //if (GlyphIndex == 0)
-            //  DebugAddInt ("Text: GlyphIndex == 0. Char = ", Ch_);
-            if (FT_Load_Glyph (Face, GlyphIndex, LoadMode (Font->Style)))
-              break;
-            //if (FT_Render_Glyph (((FT_Face) Font->Typeface)->glyph, RenderMode (Font->Style)))
-            //  break;
-              x_ = Size.x + dx + Face->glyph->metrics.horiAdvance / FontScale; //GlyphWidth (Font, Face->glyph)
-            if ((Search >= 0) && x_ >= Search)
-              break;
-            Size.x = x_;
           }
       }
     else
       DebugAdd ("No Font Loaded");
     if (Index)
-      if (x_ - Search < Search - x__)   // Pick closest side of the current charater
-        *Index = St_ - St;   // Left side
-      else
-         *Index = St__ - St;   // Right side
+      *Index = St__ - St;
     return Size;
   }
 
 int CalcColour (int c1, int c2, int Split)   // Split is 0..255
   {
-    int Res, Mask, c1_, c2_, d;
-    int n;
-    //
     if (Split == 0)
       return c1;
     if (Split == 0xFF)
@@ -161,54 +181,33 @@ int CalcColour (int c1, int c2, int Split)   // Split is 0..255
     if (c1 == c2)
       return c1;
     //
-    Res = 0;
-    Mask = 0x0000FF;
-    n = 3;
-    while (n--)
-      {
-        c1_ = c1 & Mask;
-        c2_ = c2 & Mask;
-        if (c1_ == c2_)
-          d = c1_;
-          //Res |= c1_;
-        else if (c1_ < c2_)
-          d = (c1_ + (c2_ - c1_) * Split / 255) & Mask;
-        else   // c1_ > c2_
-          d = (c2_ + (c1_ - c2_) * (255 - Split) / 255) & Mask;
-        Res |= d;
-        Mask <<= 8;
-      }
-    return Res;
+    return AlphaBlend (c2, c1, Split);
   }
-
-//int DebugCount = 0;
-//char DebugFile [] = "######.bmp";
-//#include "WidgetsImages.hpp"
 
 const int BoxX [] = {-1,  0,  1, -1, 1, -1, 0, 1};
 //const int BoxX [] = {-2,  0,  2, -2, 2, -2, 0, 2};
 const int BoxY [] = {-1, -1, -1,  0, 0,  1, 1, 1};
 //const int BoxY [] = {-2, -2, -2,  0, 0,  2, 2, 2};
 
-void CopyGlyph (_Window *Window, FT_GlyphSlot Glyph, byte Style, _Point xy, int dx, int ColBG, int ColFG, int YOffset)
+void CopyGlyph (_Window *Window, FT_GlyphSlot Glyph, byte Style, _Point xy, int dx, int ColFG, int YOffset)
   {
     byte *BitmapData, alpha;
-    int x, y, x_, y_;
+    int x0, y0, x, y, x_, y_;
     int bx, by;
-    int Pixel;
     int i;
-    _Bitmap *bmp;
     //
     if (Glyph->bitmap.rows == 0 || Glyph->bitmap.width == 0)
       return;
     bx = Glyph->bitmap.width + dx;
     by = Glyph->bitmap.rows;
+    x0 = xy.x + Glyph->metrics.horiBearingX / FontScale;
+    y0 = xy.y + YOffset - Glyph->metrics.horiBearingY / FontScale;
     if (Style & fsRotate)
-      Swap (bx, by);
-    bmp = BitmapCreate (Window, bx, by);
-    /*for (y = 0; y < by; y++)
-      for (x = 0; x < bx; x++)
-        BitmapSetPixel (bmp, x, y, ColBG);*/
+      {
+        Swap (bx, by);
+        x0 = xy.x + YOffset - Glyph->metrics.horiBearingY / FontScale;
+        y0 = xy.y - Glyph->bitmap.width;
+      }
     BitmapData = Glyph->bitmap.buffer;
     // For every pixel in the Glyph
     for (y = 0; y < Glyph->bitmap.rows; y++)
@@ -228,45 +227,23 @@ void CopyGlyph (_Window *Window, FT_GlyphSlot Glyph, byte Style, _Point xy, int 
                   if (BitmapData [x - i] > alpha)
                     alpha = BitmapData [x - i];
             if (alpha > 0)   // coloured pixel
-              Pixel = CalcColour (ColBG, ColFG, alpha);   // Calculate pixel based on alpha and plot it
-            else
-              Pixel = ColBG;
-            // Calculate pixel position on bmp
-            if (Style & fsRotate)
-              {
-                x_ = y;
-                y_ = by - 1 - x;
-              }
-            else
               {
                 x_ = x;
                 y_ = y;
+                if (Style & fsRotate)
+                  {
+                    x_ = y;
+                    y_ = by - 1 - x;
+                  }
+                if (Style & fsOutline)
+                  for (i = 0; i < SIZEARRAY (BoxX); i++)
+                    RenderDrawPixelAlpha (x0 + x_ + BoxX [i], y0 + y_ + BoxY [i], ColFG, alpha);
+                else
+                  RenderDrawPixelAlpha (x0 + x_, y0 + y_, ColFG, alpha);
               }
-            BitmapSetPixel (bmp, x_, y_, Pixel);
           }
         BitmapData += Glyph->bitmap.pitch;
       }
-    /***** char *c = DebugFile;
-    NumToStr (&c, DebugCount++, 6 | DigitsZeros);
-    BitmapSave (Window, bmp, DebugFile);
-    */
-    x = xy.x + Glyph->metrics.horiBearingX / FontScale;;
-    y = xy.y + YOffset - Glyph->metrics.horiBearingY / FontScale;
-    if (Style & fsRotate)
-      {
-        x = xy.x + YOffset - Glyph->metrics.horiBearingY / FontScale;
-        y = xy.y - Glyph->bitmap.width;
-      }
-    if (Style & fsFillBG)
-      ColBG = -1;
-    if (x + bx >= 0 && y + by >= 0)
-      {
-        RenderBitmap (Window, bmp, {0, 0, bx, by}, {x, y, bx, by}, ColBG);
-        if (Style & fsOutline)
-          for (i = 0; i < SIZEARRAY (BoxX); i++)
-            RenderBitmap (Window, bmp, {0, 0, bx, by}, {x + BoxX [i], y + BoxY [i], bx, by}, ColBG);
-      }
-    BitmapDestroy (bmp);
   }
 
 bool FreeTypeRenderString (_Window *Window, char *St, _Font *Font, _Point xy)
@@ -277,60 +254,65 @@ bool FreeTypeRenderString (_Window *Window, char *St, _Font *Font, _Point xy)
     FT_GlyphSlot Glyph;
     int ColourHL;
     int dx, acc, i;
+    int x, y;
     //
     xy0 = xy;
     ColourHL = cWhite;
     if (ColourR (Font->Colour) + ColourG (Font->Colour) + ColourB (Font->Colour) > 3 * 255 / 2)
       ColourHL = cBlack;
-    acc = Max (1, (Font->Size + 5) / 16); //CharAccentSize (Font);
+    acc = Max (1, (Font->Size + 5) / 12); //CharAccentSize (Font);
     while (true)
       {
-        if (TextCallBack)
-          TextCallBack (Window, &St, Font, &xy, NULL);
-        if (Font->Style & (fsOutline | fsShadow))
-          Font->Style |= fsNoGrayscale;
-        if (Font->Style & fsItalic)
-          FT_Set_Transform ((FT_Face) Font->Typeface, &Matrix, &Pen);
-        else
-          FT_Set_Transform ((FT_Face) Font->Typeface, NULL, &Pen);
-        dx = CharWidthAdjustment (Font);
-        if ((byte) *St < ' ')
-          break;
-        Ch_ = UTF8Read (&St);   // Read UTF8 character
-        if (Ch_ < 0)   // Invalid UTF8 character
-          return false;
-        GlyphIndex = FT_Get_Char_Index ((FT_Face) Font->Typeface, Ch_);
-        if (FT_Load_Glyph ((FT_Face) Font->Typeface, GlyphIndex, LoadMode (Font->Style)))
-          return false;
-        Glyph = ((FT_Face) Font->Typeface)->glyph;
-        if (FT_Render_Glyph (Glyph, RenderMode (Font->Style)))
-          return false;
-        if (Font->Style & fsFillBG)
-          if (Font->Style & fsRotate)
-            RenderFillRect (Window, {xy.x, xy.y - Glyph->metrics.horiAdvance / FontScale - dx, Font->YAdvance, Glyph->metrics.horiAdvance / FontScale + dx}, Font->ColourBG);
-          else
-            RenderFillRect (Window, {xy.x, xy.y, Glyph->metrics.horiAdvance / FontScale + dx, Font->YAdvance}, Font->ColourBG);
-        if (Font->Style & fsOutline)
+        if (!TextProcessSpecial (Window, &St, Font, &xy, NULL))
           {
-            CopyGlyph (Window, Glyph, Font->Style, {xy.x, xy.y}, dx, Font->ColourBG, ColourHL, Font->YOffset);
-            CopyGlyph (Window, Glyph, Font->Style & ~fsOutline, {xy.x, xy.y}, dx, ColourHL, Font->Colour, Font->YOffset);
+            if (Font->Style & (fsOutline | fsShadow))
+              Font->Style |= fsNoGrayscale;
+            if (Font->Style & fsItalic)
+              FT_Set_Transform ((FT_Face) Font->Typeface, &Matrix, &Pen);
+            else
+              FT_Set_Transform ((FT_Face) Font->Typeface, NULL, &Pen);
+            dx = CharWidthAdjustment (Font);
+            if ((byte) *St < ' ')
+              break;
+            Ch_ = UTF8Read (&St);   // Read UTF8 character
+            if (Ch_ < 0)   // Invalid UTF8 character
+              return false;
+            GlyphIndex = FT_Get_Char_Index ((FT_Face) Font->Typeface, Ch_);
+            if (FT_Load_Glyph ((FT_Face) Font->Typeface, GlyphIndex, LoadMode (Font->Style)))
+              return false;
+            Glyph = ((FT_Face) Font->Typeface)->glyph;
+            if (FT_Render_Glyph (Glyph, RenderMode (Font->Style))) // FT_Outline_Render
+              return false;
+            x = xy.x - TargetBitmapScroll.x;
+            y = xy.y - TargetBitmapScroll.y;
+            i = dx + Glyph->metrics.horiAdvance / FontScale; //GlyphWidth (Font, Glyph) + dx;
+            if (x + Font->YAdvance >= 0 && y + Font->YAdvance >= 0 &&
+                x < TargetBitmapSize.x && y < TargetBitmapSize.y)
+              {
+                if (Font->ColourBG >= 0)
+                  if (Font->Style & fsRotate)
+                    RenderFillRect ({xy.x, xy.y - Glyph->metrics.horiAdvance / FontScale - dx, Font->YAdvance, Glyph->metrics.horiAdvance / FontScale + dx}, Font->ColourBG);
+                  else
+                    RenderFillRect ({xy.x, xy.y, Glyph->metrics.horiAdvance / FontScale + dx, Font->YAdvance}, Font->ColourBG);
+                if (Font->Style & (fsOutline | fsShadow))
+                  {
+                    if (Font->Style & fsShadow)
+                      CopyGlyph (Window, Glyph, Font->Style & ~(fsOutline | fsShadow), {xy.x + acc, xy.y + acc}, dx, ColourHL, Font->YOffset);
+                    if (Font->Style & fsOutline)
+                      CopyGlyph (Window, Glyph, Font->Style, {xy.x, xy.y}, dx, ColourHL, Font->YOffset);
+                  }
+                CopyGlyph (Window, Glyph, Font->Style & ~(fsOutline | fsShadow), {xy.x, xy.y}, dx, Font->Colour, Font->YOffset);
+                if (Font->Style & fsUnderline)
+                  if (Font->Style & fsRotate)
+                    RenderDrawLine (Font->Colour, xy.x + Font->YOffset + 1, xy.y, xy.x + Font->YOffset + 1, xy.y - i);
+                  else
+                    RenderDrawLine (Font->Colour, xy.x, xy0.y + Font->YOffset + 1, xy.x + i, xy.y + Font->YOffset + 1);
+              }
+            if (Font->Style & fsRotate)
+              xy.y -= i;
+            else
+              xy.x += i;
           }
-        else
-          {
-            if (Font->Style & fsShadow)
-              CopyGlyph (Window, Glyph, Font->Style, {xy.x + acc, xy.y + acc}, dx, Font->ColourBG, ColourHL, Font->YOffset);
-            CopyGlyph (Window, Glyph, Font->Style, {xy.x, xy.y}, dx, Font->ColourBG, Font->Colour, Font->YOffset);
-          }
-        i = dx + Glyph->metrics.horiAdvance / FontScale; //GlyphWidth (Font, Glyph) + dx;
-        if (Font->Style & fsUnderline)
-          if (Font->Style & fsRotate)
-            RenderDrawLine (Window, Font->Colour, xy.x + Font->YOffset + 1, xy.y, xy.x + Font->YOffset + 1, xy.y - i);
-          else
-            RenderDrawLine (Window, Font->Colour, xy.x, xy0.y + Font->YOffset + 1, xy.x + i, xy.y + Font->YOffset + 1);
-        if (Font->Style & fsRotate)
-          xy.y -= i;
-        else
-          xy.x += i;
       }
     return true;
   }
@@ -345,10 +327,19 @@ bool FreeTypeRenderString (_Window *Window, char *St, _Font *Font, _Point xy)
 
 int FontCount = 0;
 
-_Font *FontCreate (char *FontName, int Size, byte Style, int Colour)
+_Font *FontCreate (char *Filename, int Size, byte Style)//, int Colour)
   {
+    bool OK;
+    char *Filename_;
     _Font *Font;
     //
+    OK = false;
+    Filename_ = NULL;
+    if (!FileExists (Filename))
+      {
+        Filename_ = ResourcePathAdd (Filename);
+        Filename = Filename_;
+      }
     if (FontCount++ == 0)
       {
         FreeTypeInit ();
@@ -359,18 +350,21 @@ _Font *FontCreate (char *FontName, int Size, byte Style, int Colour)
         Matrix.yy = 0x10000L;
       }
     Font = (_Font *) malloc (sizeof (_Font));
-    if (FT_New_Face (FreeTypeLibrary, FontName, 0, (FT_Face *) &Font->Typeface) == 0)
+    if (FT_New_Face (FreeTypeLibrary, Filename, 0, (FT_Face *) &Font->Typeface) == 0)
       if (FT_Set_Pixel_Sizes ((FT_Face) Font->Typeface, 0, Size) == 0)
         {
           Font->Size = Size;
           Font->Style = fsNone;
           Font->Style = Style;
-          Font->Colour = Colour;
+          Font->Colour = -1;//Colour;
           Font->ColourBG = -1;   // undefined => use Component colour
           Font->YAdvance = ((FT_Face) Font->Typeface)->size->metrics.height / FontScale;
-          Font->YOffset = ((FT_Face) Font->Typeface)->size->metrics.ascender / FontScale;
-          return Font;
+          Font->YOffset = ((FT_Face) Font->Typeface)->size->metrics.ascender / FontScale - 1;  // -1 gives better centering
+          OK = true;
         }
+    free (Filename_);
+    if (OK)
+      return Font;
     // Invalid FontName
     free (Font);
     if (--FontCount == 0)
@@ -395,16 +389,31 @@ void FontDestroy (_Font *font)
 
 _Point TextSize (_Font *font, char *Text)
   {
-    return FreeTypeMeasureString (Text, font);
+    _Point Res;
+    int Col;
+    byte Style;
+    //
+    Col = font->Colour;
+    Style = font->Style;
+    Res = FreeTypeMeasureString (Text, font);
+    font->Colour = Col;
+    font->Style = Style;
+    return Res;
   }
 
 int TextIndex (_Font *Font, char *Text, int PosX)
   {
     int Index;
+    int Col;
+    byte Style;
     //
     if (PosX <= 0)
       return 0;
+    Col = Font->Colour;
+    Style = Font->Style;
     FreeTypeMeasureString (Text, Font, &Index, PosX);
+    Font->Colour = Col;
+    Font->Style = Style;
     return Index;
   }
 

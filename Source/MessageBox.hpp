@@ -1,16 +1,16 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
-// MESSAGE BOX
+// MESSAGE BOX: Create a form displaying a message
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-// Create a form displaying a message
+// Show a message in a box
 
 extern void MessageBox (_Point Size, char *Message, int FontSize = 16);
 
 
-// Optional Details
+// For adjustments --
 
 class _FormMessageBox: public _Form
   {
@@ -18,6 +18,8 @@ class _FormMessageBox: public _Form
       _FormMessageBox (_Rect Rect_, char *Message, int FontSize);
       ~_FormMessageBox (void);
       _Label *lMessage;
+      _MenuPopup *mLabel;
   };
 
 extern _FormMessageBox *fMessageBox;
+

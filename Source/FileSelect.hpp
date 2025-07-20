@@ -16,8 +16,9 @@
 //   true => Adds an edit field for creating new files, resumably for writing
 
 
-typedef void (*_ActionResultChars) (char *Result);   // callback on file selection
-extern void FileSelect (char *Title, char *Filter, bool SaveFile, _ActionResultChars ActionFileSelected);
+typedef void (*_ActionResultChars) (char *Result, void *Parameter);   // callback on file selection
+
+extern void FileSelect (char *Title, char *Filter, bool SaveFile, _ActionResultChars ActionFileSelected, void *Parameter = NULL);
 
 extern bool FileSelectActive;   // true if form currently exists
 

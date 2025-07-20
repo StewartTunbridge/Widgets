@@ -24,7 +24,7 @@ extern void DebugAdd (const char *St);
 extern void DebugAddS (const char *s1, const char *s2);
 extern void DebugAddInt (const char *St, int n);
 extern void DebugAddP (const char *St, _Point p);
-extern void DebugAddR (const char *St, _Rect *r);
+extern void DebugAddR (const char *St, _Rect r);
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -54,7 +54,7 @@ _Bitmap *LoadBMP (_Window *Window, char *Filename)
         size = FileSize (file);
         if (size > 0x1E + sizeof (int))
           {
-            buf = (byte *) malloc (Max (size, 512l));
+            buf = (byte *) malloc (Max (size, (longint) 512));
             if (buf)
               {
                 if (FileRead (file, buf, size) == size)
@@ -70,7 +70,7 @@ _Bitmap *LoadBMP (_Window *Window, char *Filename)
                     bytepl = ((bpp * sizeX + 31) & ~31) >> 3;   // pixel lines are padded out to 4*n bytes
                     bytepad = bytepl - ((bpp * sizeX + 7) >> 3);
                     //####
-                    DebugAddS ("LoadBMP", Filename);
+                    //DebugAddS ("LoadBMP", Filename);
                     DebugAddInt ("  SizeX", sizeX);
                     DebugAddInt ("  SizeY", sizeY);
                     DebugAddInt ("  bits/pixel", bpp);
@@ -116,7 +116,7 @@ _Bitmap *LoadBMP (_Window *Window, char *Filename)
                                     }
                                   else
                                     col = col * 0xFFFFFF / (Bit [bpp] - 1);
-                                BitmapSetPixel (Img, x, y, col);// | 0xFF000000);
+                                BitmapSetPixel (Img, x, y, col | 0xFF000000);
                                 x++;
                                 if (x >= sizeX)
                                   {
@@ -182,6 +182,7 @@ _Bitmap *LoadPNG (_Window *Window, char *Filename)
                 rows = png_get_rows (png_ptr, info_ptr);
                 rowbytes = png_get_rowbytes (png_ptr, info_ptr);
                 bpp = rowbytes / width;
+                DebugAddInt ("  bytes/pixel", bpp);
                 Img = BitmapCreate (Window, width, height);
                 for (y = 0; y < height; y++)
                   {
@@ -195,15 +196,10 @@ _Bitmap *LoadPNG (_Window *Window, char *Filename)
                           pixel = row [Index+0] | row [Index+1] << 8;
                         else if (bpp == 3)
                           pixel = row [Index+0] | row [Index+1] << 8 | row [Index+2] << 16;
-                        else //if (bpp == 4)
-                          {
-                            pixel = row [Index+0] | row [Index+1] << 8 | row [Index+2] << 16 | row [Index+3] << 24;
-                            if ((pixel & 0xFF000000) == 0)   // transparent
-                              pixel = 0xFF00FF;
-                            pixel &= 0x00FFFFFF;
-                          }
+                        else //if (bpp == 4)  ignoring alpha byte
+                          pixel = row [Index+0] | row [Index+1] << 8 | row [Index+2] << 16; // | row [Index+3] << 24;
                         Index += bpp;
-                        BitmapSetPixel (Img, x, y, pixel);
+                        BitmapSetPixel (Img, x, y, pixel | 0xFF000000);
                       }
                   }
                 png_destroy_read_struct (&png_ptr, &info_ptr, (png_infopp) NULL);
@@ -216,6 +212,16 @@ _Bitmap *LoadPNG (_Window *Window, char *Filename)
 	}
 
 // stolen from https://stackoverflow.com/questions/5616216/need-help-in-reading-jpeg-file-using-libjpeg
+
+/*static int get_orientation(ExifData *ed)
+{
+    ExifEntry *ee;
+
+    ee = exif_content_get_entry(ed->ifd[EXIF_IFD_0], 0x0112);
+    if (NULL == ee)
+	return 1; // top - left
+    return get_int(ed,ee);
+}*/
 
 typedef enum {jfRGB, jfRGBA} _JpegFormat;
 
@@ -244,6 +250,7 @@ _Bitmap *LoadJPEG (_Window *Window, char* FileName)
         jpeg_create_decompress (& info);   //fills info structure
         jpeg_stdio_src (&info, file);
         jpeg_read_header (&info, TRUE);   // read jpeg file header
+        //%%%%DebugAddInt ("JPEG Orientation", info.jpeg_m exif_data->ifd [0x112].value);
         jpeg_start_decompress (&info);    // decompress the file
         //set width and height
         x = info.output_width;
@@ -282,7 +289,7 @@ _Bitmap *LoadJPEG (_Window *Window, char* FileName)
                 {
                   Pixel = jdata [Index] | jdata [Index + 1] << 8 | jdata [Index + 2] << 16;
                   Index += 3;
-                  BitmapSetPixel (Img, xx, yy, Pixel);
+                  BitmapSetPixel (Img, xx, yy, Pixel | 0xFF000000);
                 }
           }
         jpeg_destroy_decompress (&info);
@@ -295,6 +302,7 @@ _Bitmap *LoadJPEG (_Window *Window, char* FileName)
 
 _Bitmap* BitmapLoad (_Window *Window, char *Filename)
   {
+    DebugAddS ("Loading Image", Filename);
     if (StrSame (StrFindFileExtension (Filename), ".bmp"))
       return LoadBMP (Window, Filename);
     if (StrSame (StrFindFileExtension (Filename), ".png"))
@@ -302,6 +310,17 @@ _Bitmap* BitmapLoad (_Window *Window, char *Filename)
     if (StrSame (StrFindFileExtension (Filename), ".jpg") || StrSame (StrFindFileExtension (Filename), ".jpeg"))
       return LoadJPEG (Window, Filename);
     return NULL;
+  }
+
+_Bitmap* BitmapLoadResource (_Window *Window, char *Filename)
+  {
+    char *Filename_;
+    _Bitmap *Res;
+    //
+    Filename_ = ResourcePathAdd (Filename);
+    Res = BitmapLoad (Window, Filename_);
+    free (Filename_);
+    return Res;
   }
 
 // Define the BMP file header structure
@@ -481,6 +500,42 @@ bool  BitmapSave (_Window *Window, _Bitmap* Bitmap, char *Filename)
 //
 // SUPPORT
 
+void BitmapCopy (_Bitmap *Source, _Bitmap *Target, _Rect RectSource, _Point Dest)
+  {
+    int x, y;
+    int p;
+    //
+    for (x = 0; x < RectSource.Width; x++)
+      for (y = 0; y < RectSource.Height; y++)
+        {
+          p = BitmapGetPixel (Source, RectSource.x + x, RectSource.y + y);
+          BitmapSetPixel (Target, Dest.x + x, Dest.y + y, p);
+        }
+  }
+
+void BitmapFill (_Bitmap *Target, _Rect Dest, int Colour)
+  {
+    int x, y;
+    //
+    for (x = 0; x < Dest.Width; x++)
+      for (y = 0; y < Dest.Height; y++)
+        BitmapSetPixel (Target, Dest.x + x, Dest.y + y, Colour);
+  }
+
+_Point SizeStretch (_Point Size, _Point Space)   // Stretch keeping aspect ratio
+  {
+    _Point Res;
+    //
+    Res = Space;
+    if (Size.x * Space.y > Size.y * Space.x)   // Width controls size
+      Res.y = (Size.y * Space.x) / Size.x;
+    else   // Height controls size
+      Res.x = (Size.x * Space.y) / Size.y;
+    return Res;
+  }
+
+
+/*
 void BitmapCopy (_Bitmap *Source, _Bitmap *Dest, _Rect rSource, _Point pDest)
   {
     int x, y;
@@ -553,17 +608,5 @@ void BitmapFill (_Bitmap *Dest, _Rect Rect, int Pixel)
       for (x = 0; x < Rect.Width; x++)
         BitmapSetPixel (Dest, x + Rect.x, y + Rect.y, Pixel);
   }
-
-// Stretch keeping aspect ratio
-_Point SizeStretch (_Point Size, _Point Space)
-  {
-    _Point Res;
-    //
-    Res = Space;
-    if (Size.x * Space.y > Size.y * Space.x)   // Width controls size
-      Res.y = (Size.y * Space.x) / Size.x;
-    else   // Height controls size
-      Res.x = (Size.x * Space.y) / Size.y;
-    return Res;
-  }
+*/
 

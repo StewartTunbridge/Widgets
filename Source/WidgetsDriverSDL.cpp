@@ -14,8 +14,10 @@
 
 extern void DebugAdd (const char *St);   // defined in application
 extern void DebugAddS (const char *s1, const char *s2);   // defined in Widgets.cpp
-extern void DebugAdd (const char *St, int n);
+extern void DebugAddInt (const char *St, int n);
 extern void DebugAddR (const char *St, _Rect *r);
+extern void DebugAddP (const char *St, _Point p);
+extern void DebugAddHex (const char *St, int p);
 
 typedef struct
   {
@@ -23,6 +25,10 @@ typedef struct
     SDL_Renderer *Renderer;
     SDL_Surface *Icon;
   } __Window;
+
+char *ClipboardData = NULL;
+_WindowID ClipboardWinID = NULL;
+bool ClipboardReady = false;
 
 bool ForceSoftwareRendering = true;//false;
 
@@ -65,10 +71,15 @@ Uint32 SurfaceGetPixel (SDL_Surface *Surface, int x, int y)
     byte *pp;   // Pointer to a Pixel
     int Res;
     //
-    bpp = Surface->format->BytesPerPixel;
-    Index = (y * Surface->pitch) + (x * bpp);
-    pp = (Uint8*) Surface->pixels + Index;
-    Res = pp [0] | (pp [1] << 8) | (pp [2] << 16);
+    Res = 0;
+    if (x >= 0 && y >= 0 && x < Surface->w && y < Surface->h)
+      {
+        bpp = Surface->format->BytesPerPixel;
+        Index = (y * Surface->pitch) + (x * bpp);
+        pp = (Uint8*) Surface->pixels + Index;
+        //Res = pp [0] | (pp [1] << 8) | (pp [2] << 16 | pp [3] << 24);
+        Res = *((int *) pp);
+      }
     //return *(Uint32 *)pp;
     return Res;
   }
@@ -78,12 +89,16 @@ void SurfaceSetPixel (SDL_Surface *Surface, int x, int y, int Colour)
     int Index;
     byte *pByte;
     //
-    Index = (y * Surface->pitch) + (x * Surface->format->BytesPerPixel);
-    pByte = (byte *) Surface->pixels + Index;
-    *pByte++ = ColourR (Colour);
-    *pByte++ = ColourG (Colour);
-    *pByte++ = ColourB (Colour);
-    *pByte++ = 0xFF;
+    if (x >= 0 && y >= 0 && x < Surface->w && y < Surface->h)
+      {
+        Index = (y * Surface->pitch) + (x * Surface->format->BytesPerPixel);
+        *((int *) (Surface->pixels + Index)) = Colour;//%%%%
+        /*pByte = (byte *) (Surface->pixels + Index);
+        *pByte++ = ColourR (Colour);
+        *pByte++ = ColourG (Colour);
+        *pByte++ = ColourB (Colour);
+        *pByte++ = ColourA (Colour);*/
+      }
   }
 
 typedef struct
@@ -115,67 +130,82 @@ const _SDLCodeToKey SDLCodeToKeys [] =
     {0x40000042, KeyF1+8},
     {0x40000043, KeyF1+9},
     {0x40000044, KeyF1+10},
-    {0x40000045, KeyF1+11}
+    {0x40000045, KeyF1+11},
+
+    {-1, 0}
   };
 
 const char *ShiftPairs = "`~1!2@3#4$5%6^7&8*9(0)-_=+[{]}\\|;:\'\",<.>/?";
 
-int SDLkeysymToChar (SDL_Keysym *keysym, int *Shift)
+void ProcessSDLEventKey (_Event *Event, SDL_KeyboardEvent *SDLEventKey, int *Shift)
+//int SDLkeysymToChar (SDL_Keysym *keysym, int *Shift)
   {
     int Res;
-    int i;
+    SDL_Scancode sc;
+    _SDLCodeToKey const *CodeKey;
     char *p;
     //
-    i = 0;
     Res = -1;
-    while (true)
-      {
-        if (i >= SIZEARRAY (SDLCodeToKeys))
-          {
-            if (keysym->sym < 0x80)
-              Res = keysym->sym;
-            break;
-          }
-        if (SDLCodeToKeys [i].SDLCode == keysym->sym)
-          {
-            Res = SDLCodeToKeys [i].Key;
-            break;
-          }
-        i++;
-      }
-    *Shift = 0;
-    if (keysym->mod & (KMOD_LSHIFT | KMOD_RSHIFT))
-      *Shift |= KeyShift;
-    if (keysym->mod & (KMOD_LCTRL | KMOD_RCTRL))
-      *Shift |= KeyCntl;
-    if (keysym->mod & (KMOD_LALT | KMOD_RALT))
-      *Shift |= KeyAlt;
-    if (Res < 0)
-      Res = *Shift;
-    else if (Res >= 0x80)
-      Res |= *Shift;
+    sc = SDLEventKey->keysym.scancode;
+    if (*Shift == KeyCntl && sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z)
+      Res = Cntrl ('A' + sc - SDL_SCANCODE_A);
     else
       {
-        if (*Shift & KeyShift)   // Special Shift chars
+        CodeKey = SDLCodeToKeys;
+        while (true)
           {
-            p = StrPos ((char *) ShiftPairs, Res);
-            if (p)
+            if (CodeKey->SDLCode < 0)   // End of table
               {
-                Res = p [1];
-                *Shift &= ~KeyShift;
+                if (SDLEventKey->keysym.sym < 0x80)
+                  Res = SDLEventKey->keysym.sym;
+                else
+                  {
+                    Res = KeyUNICODE;
+                    Event->UTF = SDLEventKey->keysym.sym;
+                  }
+                break;
               }
+            if (CodeKey->SDLCode == SDLEventKey->keysym.sym)
+              {
+                Res = CodeKey->Key;
+                break;
+              }
+            CodeKey++;
           }
-        if (Res >= '@')   // "Alpha" keys
-          if (*Shift & KeyAlt)   // Alt alpha keys are always uppercase
-            Res = Res & ~0x20 | *Shift;
-          else if (*Shift & KeyCntl)   // Control alphas
-            Res &= 0x1F;
-          else if (*Shift & KeyShift)
-            Res &= ~0x20;
-        else
+        *Shift = 0;
+        if (SDLEventKey->keysym.mod & (KMOD_LSHIFT | KMOD_RSHIFT))
+          *Shift |= KeyShift;
+        if (SDLEventKey->keysym.mod & (KMOD_LCTRL | KMOD_RCTRL))
+          *Shift |= KeyCntl;
+        if (SDLEventKey->keysym.mod & (KMOD_LALT | KMOD_RALT))
+          *Shift |= KeyAlt;
+        if (Res < 0)
+          Res = *Shift;
+        else if (Res >= 0x80 && Res != KeyUNICODE)
           Res |= *Shift;
+        else
+          {
+            if (*Shift & KeyShift)   // Special Shift chars
+              {
+                p = StrPos ((char *) ShiftPairs, Res);
+                if (p)
+                  {
+                    Res = p [1];
+                    *Shift &= ~KeyShift;
+                  }
+              }
+            if (Res >= '@')   // "Alpha" keys
+              if (*Shift & KeyAlt)   // Alt alpha keys are always uppercase
+                Res = Res & ~0x20 | *Shift;
+              else if (*Shift & KeyCntl)   // Control alphas
+                Res &= 0x1F;
+              else if (*Shift & KeyShift)
+                Res &= ~0x20;
+            else
+              Res |= *Shift;
+          }
       }
-    return Res;
+    Event->Key = Res;
   }
 
 void MouseCursor (_Window *Window, bool Show)
@@ -397,7 +427,8 @@ bool WindowSetIcon (_Window *Window, _Bitmap *Bitmap)
 //
 // Render Functions
 
-bool RenderTarget (_Window *Window, _Texture *Texture, int Colour, _Rect Clip)
+/*
+bool RenderSetTarget (_Window *Window, _Texture *Texture, int Colour, _Rect Clip)
   {
     __Window *Window_;
     int Res;
@@ -415,25 +446,63 @@ bool RenderTarget (_Window *Window, _Texture *Texture, int Colour, _Rect Clip)
       }
     return Res == 0;
   }
+*/
 
-void RenderPresent (_Window *Window, byte Alpha)
+void RenderPresent (_Window *Window, _Bitmap *Bitmap_, _Rect Source, _Point Dest, byte Alpha)
   {
+    SDL_Surface *Bitmap;
+    SDL_Surface *screenSurface;
+    int x, y, IndexIn, IndexOut;
+    byte *PixelsIn;
+    _Colour Pixel;
+    //
     SDL_SetWindowOpacity (((__Window *) Window)->Window, (float) Alpha / 255.0);
-    SDL_RenderPresent (((__Window *) Window)->Renderer);
+    //
+    Bitmap = (SDL_Surface*) Bitmap_;
+    screenSurface = SDL_GetWindowSurface (((__Window *) Window)->Window);
+    if ( (Dest.x + Source.Width > screenSurface->w) ||
+         (Dest.y + Source.Height> screenSurface->h) ||
+         (Dest.x < 0 || Dest.y < 0) )
+      DebugAdd ("SDL_SetWindowOpacity: range error");
+    else {
+    //memcpy (screenSurface->pixels, ((SDL_Surface *) Bitmap)->pixels, screenSurface->pitch * screenSurface->h);
+    //SDL_Rect srcRect = {0, 0, ((SDL_Surface *) Bitmap)->w, ((SDL_Surface *) Bitmap)->h}; // Full source surface
+    //SDL_Rect dstRect = {0, 0, screenSurface->w, screenSurface->h}; // Full destination surface
+    //SDL_BlitSurface ((SDL_Surface *) Bitmap, &srcRect, screenSurface, &dstRect);
+    //SDL_FillRect (screenSurface, NULL, SDL_MapRGB (screenSurface->format, 0x8F, 0xFF, 0xFF));
+    PixelsIn = (byte *) (Bitmap->pixels);
+    for (y = 0; y < Source.Height; y++)
+      {
+        IndexIn = (Source.y + y) * Bitmap->pitch + Source.x * Bitmap->format->BytesPerPixel;
+        IndexOut = (Dest.y + y) * screenSurface->pitch + Dest.x * screenSurface->format->BytesPerPixel;
+        for (x = 0; x < Source.Width; x++)
+          {
+            Pixel.RGBA = ((_Colour *) (&PixelsIn [IndexIn]))->RGBA;
+            ((byte *) screenSurface->pixels) [IndexOut + 0] = Pixel.Prime [2];
+            ((byte *) screenSurface->pixels) [IndexOut + 1] = Pixel.Prime [1];
+            ((byte *) screenSurface->pixels) [IndexOut + 2] = Pixel.Prime [0];
+            if (screenSurface->format->BytesPerPixel == 4)
+              ((byte *) screenSurface->pixels) [IndexOut + 3] = Pixel.Prime [3];
+            IndexIn += ((SDL_Surface *) Bitmap)->format->BytesPerPixel;
+            IndexOut += screenSurface->format->BytesPerPixel;
+          }
+      }
+    SDL_UpdateWindowSurface (((__Window *) Window)->Window); }
+    //SDL_RenderPresent (((__Window *) Window)->Renderer);
   }
 
-void SetRenderDrawColor (_Window *Window, int Colour)
+void SetRenderDrawColor (_Window *Window, int Colour, byte Alpha = 0xFF)
   {
     if (Colour != TargetColour)
       {
-        SDL_SetRenderDrawColor (((__Window *) Window)->Renderer, ColourR (Colour), ColourG (Colour), ColourB (Colour), 0xFF);
+        SDL_SetRenderDrawColor (((__Window *) Window)->Renderer, ColourR (Colour), ColourG (Colour), ColourB (Colour), Alpha);
         TargetColour = Colour;
       }
   }
 
-void RenderDrawPoint (_Window *Window, int Colour, int x, int y)
+void RenderDrawPoint (_Window *Window, int Colour, int x, int y, byte Alpha)
   {
-    SetRenderDrawColor (Window, Colour);
+    SetRenderDrawColor (Window, Colour, Alpha);
     SDL_RenderDrawPoint (((__Window *) Window)->Renderer, x, y);
   }
 
@@ -480,7 +549,7 @@ void RenderFillTransparent (_Window *Window)
 
 bool WindowIDMatch (_WindowID WindowID, _Window *Window)
   {
-    return WindowID == SDL_GetWindowID (((__Window *) Window)->Window);
+    return WindowID == (_WindowID) SDL_GetWindowID (((__Window *) Window)->Window);
   }
 
 int MouseX = 0, MouseY = 0;   // Keep for Mouse Wheel events
@@ -491,12 +560,20 @@ void EventPoll (_Event *Event)
     SDL_Event SDLEvent;
     //
     Event->Type = etNone;
+    if (ClipboardReady)
+      {
+        ClipboardReady = false;
+        Event->Type = etClipboard;
+        Event->WindowID = ClipboardWinID;
+        return;
+      }
     if (SDL_PollEvent (&SDLEvent))
       {
-        Event->WindowID = SDLEvent.window.windowID;
+        Event->WindowID = (_WindowID) SDLEvent.window.windowID;
         if (SDLEvent.type == SDL_KEYUP)
           {
-            Event->Key = SDLkeysymToChar (&SDLEvent.key.keysym, &ShiftState);
+            ProcessSDLEventKey (Event, &SDLEvent.key, &ShiftState);
+            //Event->Key = SDLkeysymToChar (&SDLEvent.key.keysym, &ShiftState);
             if (Event->Key >= 0)
               Event->Type = etKeyUp;
             if ((SDLEvent.key.keysym.sym == SDLK_F4) || (SDLEvent.key.keysym.sym == SDLK_x))   // Quit application
@@ -505,9 +582,11 @@ void EventPoll (_Event *Event)
           }
         else if (SDLEvent.type == SDL_KEYDOWN)
           {
-            Event->Key = SDLkeysymToChar (&SDLEvent.key.keysym, &ShiftState);
+            ProcessSDLEventKey (Event, &SDLEvent.key, &ShiftState);
+            //Event->Key = SDLkeysymToChar (&SDLEvent.key.keysym, &ShiftState);
             if (Event->Key >= 0)
               Event->Type = etKeyDown;
+            //DebugAddHex ("SDL keysym.sym", {SDLEvent.key.keysym.sym}); //####
           }
         else if (SDLEvent.type == SDL_MOUSEBUTTONDOWN || SDLEvent.type == SDL_MOUSEBUTTONUP)
           {
@@ -572,6 +651,7 @@ void EventPoll (_Event *Event)
     Event->ShiftState = ShiftState;
   }
 
+/*
 bool RenderTexture (_Window *Window, _Texture *Texture, _Rect RecSource, int DestX, int DestY, byte AlphaOffset)
   {
     bool Res;
@@ -633,7 +713,6 @@ void TextureGetSize (_Texture *Texture, int *Width, int *Height)
       SDL_QueryTexture ((SDL_Texture *) Texture, &Format, &Access, Width, Height);
   }
 
-/*
 extern _Texture *TextureFromText (_Window *Window, char *Text, _Typeface *Font, int Colour)
   {
     SDL_Surface *Surface;
@@ -700,6 +779,21 @@ bool BitmapGetSize (_Bitmap *Bitmap, int *Width, int *Height)
     return false;
   }
 
+void BitmapClear (_Bitmap *Bitmap)
+  {
+    int w, h;
+    int x, y;
+    //
+    BitmapGetSize (Bitmap, &w, &h);
+    for (x = 0; x < w; x++)
+      for (y = 0; y < h; y++)
+        BitmapSetPixel (Bitmap, x, y, 0);
+  }
+
+
+//////////////////////////////////////////////////////////////////////////////////
+/*
+
 bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, int ColTransparent)   // Allow resizing
   {
     __Window *Window_;
@@ -735,17 +829,20 @@ _Bitmap* BitmapFromTexture (_Window *Window, _Texture *Texture, int Width, int H
     SDL_RenderReadPixels (Window_->Renderer, &Surface->clip_rect, Surface->format->format, Surface->pixels, Surface->pitch);
     return Surface;
   }
+*/
 
 ////////////////////////////////////////////////////////////////////////////
 //
 // Clipboard
 
-char* ClipboardGet (void)
+void ClipboardGet (_Window *Window_)
   {
-    return SDL_GetClipboardText ();
+    StrAssign (&ClipboardData, SDL_GetClipboardText ());
+    ClipboardWinID = (void *) SDL_GetWindowID (((__Window *) Window_)->Window);
+    ClipboardReady = true;
   }
 
-bool ClipboardSet (char *Text)
+bool ClipboardSet (_Window *Window_, char *Text)
   {
     return SDL_SetClipboardText (Text) == 0;
   }
@@ -803,11 +900,17 @@ bool StartThread (_ThreadFunction ThreadFunction, void *Param)
     */
   }
 
+void Beep (void)   // Make a beep, why not?
+  {
+     puts ("\a");
+  }
+
+
 ////////////////////////////////////////////////////////////////////////////
 //
 // Main Programme
 
-int main (int argc, char* args [])
+int main (int argc, char* argv [])
   {
-    return main_ (argc, args);
+    return main_ (argc, argv);
   }

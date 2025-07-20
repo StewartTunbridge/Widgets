@@ -17,6 +17,9 @@
 #include <X11/Xos.h>
 #include <X11/cursorfont.h>
 #include <X11/Xatom.h>
+//#include <X11/XKBlib.h>
+#include <xkbcommon/xkbcommon.h>
+#include <limits.h>
 
 #include "WidgetsDriver.hpp"
 
@@ -25,24 +28,18 @@ extern void DebugAddS (const char *s1, const char *s2);   // defined in Widgets.
 extern void DebugAddInt (const char *St, int n);
 extern void DebugAddR (const char *St, _Rect *r);
 extern void DebugAddP (const char *St, _Point p);
+extern void DebugAddHex (const char *St, int p);
 
 extern bool RenderBitmapTransparentTL (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest);
-
-#define TexturesEnabled
-
-/*
-GC gcCopy;
-GC gcOr;
-GC gcAnd;
-GC gcAndInverted;
-*/
 
 typedef struct
   {
     int Width, Height;
-    Pixmap Image;
-    Pixmap Mask;
-  } __Texture;
+    int ImageDataSize;
+    int *ImageData;
+    XImage *Image;   // RGB normally
+    byte *Alpha;   // Pixel Alpha mask: 0 => not to render.  0xFF => Full render
+  } __Bitmap;
 
 typedef struct
   {
@@ -50,23 +47,24 @@ typedef struct
     int XDepth;
     Visual *XVisual;
     Window XWindow;
-    GC WinGCCopy;
-    GC WinGCOr;
-    GC WinGCAnd;
-    GC WinGCAndInvert;
+    GC gc;
     //
     byte WindowAttributes;
     int SizeX, SizeY;
-    //Pixmap Icon;
-    __Texture *tIcon;
-    Pixmap pIcon;
   } __Window;
 
-bool ForceSoftwareRendering = false;
-
 Display *XDisplay = NULL;
-Window XWindow = 0;
-Atom wm_delete_window;// = XInternAtom (XDisplay, "WM_DELETE_WINDOW", False);
+Window WindowMain = 0;
+Atom aDeleteWindow;   // Used to trap window close events
+
+// Clipboard support
+Atom aCLIPBOARD;
+Atom aUTF8;
+Atom aXSEL_DATA;
+Atom aTARGETS;
+
+Window ClipboardRequestWindow = 0;
+char *ClipboardData = NULL;
 
 
 /////////////////////////////////////////////////////////////////////////
@@ -143,91 +141,33 @@ void XImageDump (XImage *Image, char *Name)
 
 /////////////////////////////////////////////////////////////////////////
 //
-// COLOUR TRANSLATION
-
-int RGB (byte R, byte G, byte B)
-  {
-    return B << 16 | G << 8 | R;
-  }
+// COLOUR TRANSLATION - and yes these are both the same
 
 int ColourToXColour (int Colour)//, byte Alpha)
   {
+    _Colour c, Res;
+    //
+    //return Colour;
+    c.RGBA = Res.RGBA = Colour;
+    Res.Prime [0] = c.Prime [2];
+    Res.Prime [2] = c.Prime [0];
+    return Res.RGBA;
     //return ColourR (Colour) << 16 | ColourG (Colour) << 8 | ColourB (Colour) | Alpha << 24;
-    return ColourR (Colour) << 16 | ColourG (Colour) << 8 | ColourB (Colour);
+    //return ColourR (Colour) << 16 | ColourG (Colour) << 8 | ColourB (Colour);
   }
 
 int XColourToColour (int XColour)
   {
-    return ((XColour & 0xFF0000) >> 16) | (XColour & 0x00FF00) | ((XColour & 0x0000FF) << 16);
+    _Colour c, Res;
+    //
+    //return XColour;
+    c.RGBA = Res.RGBA = XColour;
+    Res.Prime [0] = c.Prime [2];
+    Res.Prime [2] = c.Prime [0];
+    return Res.RGBA;
+    //return ((XColour & 0xFF0000) >> 16) | (XColour & 0x00FF00) | ((XColour & 0x0000FF) << 16);
   }
 
-
-/////////////////////////////////////////////////////////////////////////
-//
-// KEYCODE TRANSLATION
-
-typedef struct
-  {
-    int XCode;
-    byte Key;
-  } _XCodeToKey;
-
-const _XCodeToKey XCodeToKeys [] =
-  {
-    {XK_Escape, esc},
-    {XK_Return, cr},
-    {XK_BackSpace, bs},
-    {XK_Tab, tab},
-    //
-    {XK_Up, KeyUp},
-    {XK_Down, KeyDown},
-    {XK_Left, KeyLeft},
-    {XK_Right, KeyRight},
-    {XK_Insert, KeyIns},
-    {XK_Delete, KeyDel},
-    {XK_Home, KeyHome},
-    {XK_End, KeyEnd},
-    {XK_Page_Up, KeyPageUp},
-    {XK_Page_Down, KeyPageDown},
-    {XK_F1, KeyF1+0},
-    {XK_F2, KeyF1+1},
-    {XK_F3, KeyF1+2},
-    {XK_F4, KeyF1+3},
-    {XK_F5, KeyF1+4},
-    {XK_F6, KeyF1+5},
-    {XK_F7, KeyF1+6},
-    {XK_F8, KeyF1+7},
-    {XK_F9, KeyF1+8},
-    {XK_F10, KeyF1+9},
-    {XK_F11, KeyF1+10},
-    {XK_F12, KeyF1+11}
-  };
-
-int XkeysymToChar (int keysym)
-  {
-    int Res;
-    int i;
-    //
-    i = 0;
-    Res = -1;
-    while (true)
-      {
-        if (i >= SIZEARRAY (XCodeToKeys))
-          {
-            Res = keysym;
-            //if ((keysym & 0xFF00) == 0xFF00)
-              Res = keysym & 0x00FF;
-            break;
-          }
-        if (XCodeToKeys [i].XCode == keysym)
-          {
-            Res = XCodeToKeys [i].Key;
-            break;
-          }
-        i++;
-      }
-    return Res;
-  }
 
 /////////////////////////////////////////////////////////////////////////
 //
@@ -245,7 +185,7 @@ _Point MousePos (void)
     Window root, child;
     int rootX, rootY, winX, winY;
     unsigned int mask;
-    XQueryPointer (XDisplay, XWindow, &root, &child, &rootX, &rootY, &winX, &winY, &mask);
+    XQueryPointer (XDisplay, WindowMain, &root, &child, &rootX, &rootY, &winX, &winY, &mask);
     return {rootX, rootY};
   }
 
@@ -279,8 +219,11 @@ bool WidgetsInit (void)
   {
     XSetErrorHandler (ErrorHandler);
     XDisplay = XOpenDisplay (NULL);
-    wm_delete_window = XInternAtom (XDisplay, "WM_DELETE_WINDOW", False);
-    // slows things if true XSynchronize (XDisplay, false);   // make operations asynchronous
+    aDeleteWindow = XInternAtom (XDisplay, "WM_DELETE_WINDOW", False);
+    aCLIPBOARD = XInternAtom (XDisplay, "CLIPBOARD", false);
+    aUTF8 = XInternAtom (XDisplay, "UTF8_STRING", false);
+    aXSEL_DATA = XInternAtom (XDisplay, "XSEL_DATA", false);
+    aTARGETS = XInternAtom (XDisplay, "TARGETS", false);
     return true;
   }
 
@@ -288,6 +231,10 @@ bool WidgetsUninit (void)
   {
     if (XDisplay)
       XCloseDisplay (XDisplay);
+    XDisplay = NULL;
+    if (ClipboardData)
+      free (ClipboardData);
+    ClipboardData = NULL;
     return true;
   }
 
@@ -295,64 +242,19 @@ void SetGCFunction (__Window *Window, GC gc, int Function)
   {
     XGCValues gcv;
     //
-    //XGetGCValues (XDisplay, gc, GCFunction, &gcv);
     gcv.function = Function;
     XChangeGC (XDisplay, gc, GCFunction, &gcv);
   }
 
-// Copy pixmap area using a mask to a Drawable
-// Mask is Black & White. Areas in Source corresponding White areas in Mask are drawn on Dest
-bool CopyArea (__Window *Window, Drawable Source, Drawable Dest, Drawable SourceMask, Drawable DestMask, int x, int y, int Width, int Height, int DestX, int DestY)
+void ApplyAlpha (Window window, Drawable Image, int Width, int Height, byte Alpha)
   {
-    Pixmap Mask_;
-    __Window * Window_;
-    //
-    Window_ = Window;
-    if (SourceMask == 0)
-      {
-        XCopyArea (XDisplay, Source, Dest, Window_->WinGCCopy, x, y, Width, Height, DestX, DestY);
-        if (DestMask)
-          {
-            XSetForeground (XDisplay, Window_->WinGCCopy, 0x00FFFFFF);
-            XFillRectangle (XDisplay, DestMask, Window_->WinGCCopy, DestX, DestY, Width, Height);
-          }
-      }
-    else   // #### Try XSetClipMask instead of the following logic, may be faster
-      {
-        Mask_ = XCreatePixmap (XDisplay, Dest, Width, Height, Window->XDepth);
-        // Clear effected pixels in Dest
-        //@@@@SetGCFunction (Window, gc, GXandInverted);
-        XCopyArea (XDisplay, SourceMask, Dest, Window_->WinGCAndInvert, x, y, Width, Height, DestX, DestY);
-        // Generate coloured Mask to OR into Dest
-        //@@@@SetGCFunction (Window, gc, GXcopy);
-        XCopyArea (XDisplay, SourceMask, Mask_, Window_->WinGCCopy, x, y, Width, Height, 0, 0);
-        //@@@@SetGCFunction (Window, gc, GXand);
-        XCopyArea (XDisplay, Source, Mask_, Window_->WinGCAnd, x, y, Width, Height, 0, 0);
-        // Copy new coloured Mask into Dest
-        //@@@@SetGCFunction (Window, gc, GXor);
-        XCopyArea (XDisplay, Mask_, Dest, Window_->WinGCOr, 0, 0, Width, Height, DestX, DestY);
-        // Modify DestMask
-        if (DestMask)
-          XCopyArea (XDisplay, SourceMask, DestMask, Window_->WinGCOr, 0, 0, Width, Height, DestX, DestY);
-        // Restore gc & free new Mask
-        //@@@@SetGCFunction (Window, gc, GXcopy);
-        XFreePixmap (XDisplay, Mask_);
-      }
-    return true;
-  }
-
-void ApplyAlpha (_Window *Window, Drawable Image, int Width, int Height, byte Alpha)
-  {
-    __Window *Window_;
     int Alpha_;
-    //
-    Window_ = (__Window *) Window;
     //
     Alpha_ = Alpha | Alpha << 8 | Alpha << 16 | Alpha << 24;
     if (Alpha == 0xFF)
-      XDeleteProperty (XDisplay, Window_->XWindow, XInternAtom (XDisplay, "_NET_WM_WINDOW_OPACITY", 0));
+      XDeleteProperty (XDisplay, window, XInternAtom (XDisplay, "_NET_WM_WINDOW_OPACITY", 0));
     else
-      XChangeProperty (XDisplay, Window_->XWindow, XInternAtom (XDisplay, "_NET_WM_WINDOW_OPACITY", 0),
+      XChangeProperty (XDisplay, window, XInternAtom (XDisplay, "_NET_WM_WINDOW_OPACITY", 0),
                        XA_CARDINAL, 32, PropModeReplace, (byte *) &Alpha_, 1);
   }
 
@@ -383,8 +285,8 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
   {
     __Window *Res;
     bool OK;
-    int x_, y_;
-    Window w;
+    //int x_, y_;
+    //Window w;
     int Width, Height;
     Atom window_type;
     long value;
@@ -420,27 +322,18 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
         Res->XWindow = XCreateSimpleWindow (XDisplay, RootWindow (XDisplay, Res->XScreen), 0, 0, SizeX_, SizeY_, 0, BlackPixel (XDisplay, Res->XScreen), WhitePixel (XDisplay, Res->XScreen));
         if (Res->XWindow)
           {
-            if (XWindow == 0)
-              XWindow = Res->XWindow;   // keep for MousePos ()
+            if (WindowMain == 0)
+              WindowMain = Res->XWindow;   // First window, keep for MousePos () and Clipboard
             XMapWindow (XDisplay, Res->XWindow);   // needed for XMoveWindow ()
             XMoveWindow (XDisplay, Res->XWindow, x, y);
             Res->SizeX = SizeX_;
             Res->SizeY = SizeY_;
-            Res->WinGCCopy = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
-            SetGCFunction (Res, Res->WinGCCopy, GXcopy);
-            Res->WinGCOr = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
-            SetGCFunction (Res, Res->WinGCOr, GXor);
-            Res->WinGCAnd = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
-            SetGCFunction (Res, Res->WinGCAnd, GXand);
-            Res->WinGCAndInvert = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
-            SetGCFunction (Res, Res->WinGCAndInvert, GXandInverted);
-            Res->tIcon = NULL;
-            Res->pIcon = 0;
+            Res->gc = XCreateGC (XDisplay, Res->XWindow, 0, NULL);
+            SetGCFunction (Res, Res->gc, GXcopy);
+            // Set Event traps
+            XSetWMProtocols (XDisplay, Res->XWindow, &aDeleteWindow, 1);   // Trap window close messages
             //
-            // Trap window close messages
-            XSetWMProtocols (XDisplay, Res->XWindow, &wm_delete_window, 1);
-            //
-            if (~WindowAttributes & waResizable)
+            if (~WindowAttributes & waResizable)   // NOT Resizable
               {
                 XSizeHints *size_hints = XAllocSizeHints ();
                 size_hints->flags = PMinSize | PMaxSize;
@@ -450,9 +343,9 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
                 XFree (size_hints);
                 //attr.override_redirect = 1; BLOCKS EVERY WINDOW MANAGER TASK
                 //XChangeWindowAttributes (Res->XDisplay, Res->XWindow, CWOverrideRedirect, &attr);
-                window_type = XInternAtom (XDisplay, "_NET_WM_WINDOW_TYPE", false);
-                value = XInternAtom (XDisplay, "_NET_WM_WINDOW_TYPE_MENU", false);
-                XChangeProperty (XDisplay, Res->XWindow, window_type, XA_ATOM, 32, PropModeReplace, (unsigned char *) &value, 1);
+                //window_type = XInternAtom (XDisplay, "_NET_WM_WINDOW_TYPE", false);
+                //value = XInternAtom (XDisplay, "_NET_WM_WINDOW_TYPE_MENU", false);
+                //XChangeProperty (XDisplay, Res->XWindow, window_type, XA_ATOM, 32, PropModeReplace, (unsigned char *) &value, 1);
               }
             //
             if (WindowAttributes & waBorderless)
@@ -499,9 +392,13 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
               StructureNotifyMask);   // Specify what Events we get
             if (Title)
               XStoreName (XDisplay, Res->XWindow, Title);   // Set Title Name
-            //XSetInputFocus (Res->XDisplay, Res->XWindow, RevertToNone, CurrentTime);
+            //XRaiseWindow (XDisplay, Res->XWindow);
+            //Window w;
+            //int r;
+            //XGetInputFocus (XDisplay, &w, &r);
+            //XSetInputFocus (XDisplay, Res->XWindow, r, CurrentTime);
+            //XGetInputFocus (XDisplay, &w, &r);
             XFlush (XDisplay);
-            XRaiseWindow (XDisplay, Res->XWindow);
             OK = true;
           }
       }
@@ -514,62 +411,49 @@ _Window *WindowCreate (char *Title, int x, int y, int SizeX_, int SizeY_, byte W
     return Res;
   }
 
-bool WindowSetIcon (_Window *Window, _Bitmap *Bitmap)
+bool WindowSetIcon (_Window *Window, _Bitmap *Bitmap_)
   {
     __Window *Window_;
-    XImage *Img;
-    XWMHints *wm_hints;
+    __Bitmap *Bitmap;
+    long *Pixels, *p;
+    int Size;
+    int Pix, PixTrans;
+    int x, y;
+    Atom net_wm_icon;
     //
+    if (Bitmap_ == NULL)
+      return false;
     Window_ = (__Window *) Window;
-    if (Window_->tIcon)
-      TextureDestroy (Window, Window_->tIcon);
-    if (Window_->pIcon)
-      XFreePixmap (XDisplay, Window_->pIcon);
-    Window_->tIcon = NULL;
-    Window_->pIcon = 0;
-    if (Bitmap)
-      {
-        wm_hints = XAllocWMHints ();
-        Img = (XImage *) Bitmap;
-        Window_->tIcon = (__Texture *) TextureCreate (Window, Img->width, Img->height);
-        if (Window_->tIcon)
-          {
-            RenderTarget (Window, Window_->tIcon, 0, {0, 0, Img->width, Img->height});
-            RenderFillTransparent (Window);
-            RenderBitmapTransparentTL (Window, Bitmap, {0, 0, Img->width, Img->height}, {0, 0, Img->width, Img->height});
-            wm_hints->icon_pixmap = Window_->tIcon->Image;
-            wm_hints->icon_mask = Window_->tIcon->Mask;
-            wm_hints->flags = IconPixmapHint | IconMaskHint;
-          }
-        else
-          {
-            Window_->pIcon = XCreatePixmap (XDisplay, Window_->XWindow, Img->width, Img->height, Window_->XDepth);
-            XPutImage (XDisplay, Window_->pIcon, Window_->WinGCCopy, Img, 0, 0, 0, 0, Img->width, Img->height);
-            wm_hints->icon_pixmap = Window_->pIcon;
-            wm_hints->flags = IconPixmapHint;  // StateHint | IconPixmapHint | InputHint;
-          }
-        XSetWMHints (XDisplay, Window_->XWindow, wm_hints);
-        XFree (wm_hints);
-      }
+    Bitmap = (__Bitmap *) Bitmap_;
+    // Convert Bitmap to Icon format: (long) w, h, p..p
+    Size = 2 + Bitmap->Width * Bitmap->Height;
+    Pixels = (long *) malloc (Size * sizeof (long));
+    p = Pixels;
+    *p++ = Bitmap->Width;
+    *p++ = Bitmap->Height;
+    PixTrans = XGetPixel (Bitmap->Image, 0, 0);
+    for (y = 0; y < Bitmap->Height; y++)
+      for (x = 0; x < Bitmap->Width; x++)
+        {
+          Pix = XGetPixel (Bitmap->Image, x, y);
+          if (Pix == PixTrans)
+            *p++ = 0x00000000;
+          else
+            *p++ = Pix | 0xFF000000;
+        }
+    net_wm_icon = XInternAtom (XDisplay, "_NET_WM_ICON", False);
+    XChangeProperty (XDisplay, Window_->XWindow, net_wm_icon, XA_CARDINAL, 32, PropModeReplace, (byte *) Pixels, Size);//(unsigned char *) Img->data, Img->width * Img->height);
+    free (Pixels);
     return true;
   }
 
 bool WindowSetPosSize (_Window *Win, int x, int y, int Width, int Height)
   {
     __Window *Window_;
-    int x_, y_;
-    Window w;
     //
     Window_ = (__Window *) Win;
     if (x >= 0 && y >= 0)
-      {
-        XMoveWindow (XDisplay, Window_->XWindow, x, y);
-        //DebugAddP ("XSetPos", {x, y});???
-        //XTranslateCoordinates (XDisplay, DefaultRootWindow (XDisplay), Window_->XWindow, x, y, &x_, &y_, &w);
-        //DebugAddP ("XSetPosTrans", {x_, y_});
-        //XTranslateCoordinates (XDisplay, Window_->XWindow, DefaultRootWindow (XDisplay), x, y, &x_, &y_, &w);
-        //XMoveWindow (XDisplay, Window_->XWindow, x_, y_);
-      }
+      XMoveWindow (XDisplay, Window_->XWindow, x, y);
     if (Width >= 0 && Height >= 0)
       XResizeWindow (XDisplay, Window_->XWindow, Width, Height);
     return true;
@@ -580,13 +464,9 @@ void WindowGetPosSize (_Window *Win, int *x, int *y, int *Width, int *Height)
     __Window *Window_;
     XWindowAttributes  wa;
     int x_, y_;
-    unsigned int w_, h_;
-    unsigned int b_, d_;
     Window w;
     //
     Window_ = (__Window *) Win;
-    //XGetGeometry (XDisplay, Window_->XWindow, &w, &x_, &y_, &w_, &h_, &b_, &d_);
-    //DebugAddP ("XGetWinAtt:", {wa.x, wa.y}); //####
     XTranslateCoordinates (XDisplay, Window_->XWindow, DefaultRootWindow (XDisplay), 0, 0, &x_, &y_, &w);
     XGetWindowAttributes (XDisplay, Window_->XWindow, &wa); //w
     if (x)
@@ -612,179 +492,324 @@ void WindowDestroy (_Window *Window)
     __Window *Window_;
     //
     Window_ = (__Window *) Window;
-    if (Window_->tIcon)
-      TextureDestroy (XDisplay, Window_->tIcon);
-    if (Window_->pIcon)
-      XFreePixmap (XDisplay, Window_->pIcon);
+    XFreeGC (XDisplay, Window_->gc);
     if (MouseCursorPixmap)
       XFreePixmap (XDisplay, MouseCursorPixmap);
-    XFreeGC (XDisplay, Window_->WinGCCopy);
-    XFreeGC (XDisplay, Window_->WinGCOr);
-    XFreeGC (XDisplay, Window_->WinGCAnd);
-    XFreeGC (XDisplay, Window_->WinGCAndInvert);
     XDestroyWindow (XDisplay, Window_->XWindow);
-    //if (Window_->XDisplay)
-    //  XCloseDisplay (Window_->XDisplay);
     free (Window);
   }
 
-
-////////////////////////////////////////////////////////////////////////////
-//
-// RENDER FUNCTIONS
-
-__Texture *RenderTargetTexture;
-__Texture WindowTexture;
-
-int TargetColour;
-int TargetColourBgnd;
-XRectangle XTargetClip;
-
-bool RenderTarget (_Window *Window, _Texture *Texture, int Colour, _Rect Clip)   // Specify where to draw
+void RenderPresent (_Window *Window_, _Bitmap *Bitmap_, _Rect Source, _Point Dest, byte Alpha)
   {
-    __Window *Window_;
+    __Window *Window;
+    __Bitmap *Bitmap;
     //
-    Window_ = (__Window *) Window;
-    if (Texture && ((__Texture *) Texture)->Image)
-      RenderTargetTexture = (__Texture *) Texture;
-    else
+    //DebugAdd ("Prensenting");   //%%%% Optimize
+    Window = (__Window *) Window_;
+    Bitmap = (__Bitmap *) Bitmap_;
+    if (Alpha != 0xFF)
+      ApplyAlpha (Window->XWindow, Window->XWindow, Window->SizeX, Window->SizeY, Alpha);
+    XPutImage (XDisplay, Window->XWindow, Window->gc, Bitmap->Image, Source.x, Source.y, Dest.x, Dest.y, Source.Width, Source.Height);  //Window->SizeX, Window->SizeY);
+  }
+
+/*
+typedef struct
+  {
+    int RangeA, RangeB;
+    int Char;
+    char *Chars;
+  } _KeyTable;
+
+byte KeyEdit [] = {KeyHome, KeyUp, KeyPageUp, KeyLeft, KeyRight, KeyEnd, KeyDown, KeyPageDown, KeyIns, KeyDel, '\0'};
+
+_KeyTable KeyTable [] =
+  {
+    {65, 65, ' ',    NULL},
+    {49, 49, '`',    NULL},
+    {10, 22, 0,      "1234567890-=\x08"},
+    {23, 35, 0,      "\x09qwertyuiop[]"},
+    {51, 51, '\\',   NULL},
+    {38, 48, 0,      "asdfghjkl;'"},
+    {36, 36, '\x0d', NULL},   // Enter
+    {52, 61, 0,      "zxcvbnm,./"},
+    {9, 9, '\x1b',   NULL},   // esc
+    //
+    // Numeric Keypad
+    {77, 77, KeyNL, NULL},   // Num Lock
+    {106, 106, '/', NULL},
+    {63, 63, '*', NULL},
+    {82, 82, '-', NULL},
+    {79, 81, 0, "789"},
+    {83, 85, 0, "456"},
+    {87, 89, 0, "123"},
+    {90, 91, 0, "0."},
+    {86, 86, '+', NULL},
+    {104, 104, '\x0d', NULL},   // Enter
+    //
+    {67, 76, KeyF1, NULL},
+    {95, 96, KeyF1+10, NULL},
+    //
+    {110, 119, 0, (char *) KeyEdit},
+    //
+    {50, 50, KeyShift, NULL},
+    {62, 62, KeyShift, NULL},
+    {37, 37, KeyCntl, NULL},
+    {105, 105, KeyCntl, NULL},
+    {64, 64, KeyAlt, NULL},
+    {108, 108, KeyAlt, NULL},
+    //
+    {-1, -1, 0, NULL}
+  };
+
+char KeyShiftTable [] = "`~1!2@3#4$5%6^7&8*9(0)-_=+[{]}\\|;:'\",<.>/?";
+
+int LookupKeyCode (bool Down, int keycode, int *ShiftState)
+  {
+    int Res;
+    byte ResCh;
+    bool ResAlpha;
+    char *p;
+    _KeyTable *kt;
+    //
+    Res = 0;
+    kt = KeyTable;
+    while (true)
       {
-        //WindowTexture.Width = 0;
-        //WindowTexture.Height = 0;
-        WindowTexture.Image = Window_->XWindow;
-        WindowTexture.Mask = 0;
-        //@@@@WindowTexture.gc = Window_->WinGC; //DefaultGC (Window_->XDisplay, Window_->XScreen);
-        //WindowTexture.gc = DefaultGC (Window_->XDisplay, Window_->XScreen);
-        //@@@@WindowTexture.gcMask = NULL;
-        RenderTargetTexture = &WindowTexture;
+        if (kt->RangeA < 0)
+          break;
+        if (keycode >= kt->RangeA && keycode <= kt->RangeB)   // in range
+          {
+            if (kt->Char == 0)
+              Res = (byte) kt->Chars [keycode - kt->RangeA];   // use the "string"
+            else if (kt->Char < 0x100)   // non shift keys
+              Res = kt->Char + (keycode - kt->RangeA);
+            else   // Shift Keys
+              if (Down)
+                *ShiftState |= kt->Char;
+              else
+                *ShiftState &= ~kt->Char;
+            break;
+          }
+        kt++;
       }
-    TargetColour = -1;
-    TargetColourBgnd = Colour;
-    if (Texture == NULL)
+    ResCh = Res;   // low 8 bits
+    ResAlpha = (ResCh >= 'a' && ResCh <= 'z');
+    if (Res)
       {
-        XTargetClip.x = Clip.x;
-        XTargetClip.y = Clip.y;
-        XTargetClip.width = Clip.Width;
-        XTargetClip.height = Clip.Height;
-        //@@@@XSetClipRectangles (XDisplay, RenderTargetTexture->gc, 0, 0, &XTargetClip, 1, Unsorted);
-        XSetClipRectangles (XDisplay, Window_->WinGCCopy, 0, 0, &XTargetClip, 1, Unsorted);
-        //XSetClipRectangles (Window_->XDisplay, RenderTargetTexture->gc, Clip.x, Clip.y, &XTargetClip, 1, Unsorted);
+        Res |= *ShiftState;
+        if (ResCh && (ResCh < 0x80))
+          if (*ShiftState & KeyAlt)   // Is Alt
+            {
+              if (ResAlpha)   // Alt capitals
+                Res = Res - 'a' + 'A';
+            }
+          else
+            if (*ShiftState & KeyCntl)   // Is Cntrl
+              {
+                if (ResCh >= '@')
+                  ResCh = ResCh & 0x1F;
+                Res = ResCh;
+              }
+            else if (*ShiftState & KeyShift)
+              if (ResAlpha)
+                Res = ResCh - 'a' + 'A';
+              else
+                {
+                  p = StrPos (KeyShiftTable, (char) ResCh);
+                  if (p)
+                    Res = *(p + 1);
+                }
       }
+    return Res;
+  }
+*/
+
+typedef struct
+  {
+    int XK0, XK1;
+    int Key;
+  } _TranslateTable;
+
+_TranslateTable XKeyTable [] =
+  {
+    {XK_Shift_L, XK_Shift_R, KeyShift},
+    {XK_Control_L, XK_Control_R, KeyCntl},
+    {XK_Alt_L, XK_Alt_R, KeyAlt},
+
+    {XK_Escape, XK_Escape, esc},
+    {XK_Tab, XK_Tab, tab},
+    {XK_BackSpace, XK_BackSpace, bs},
+    {XK_Return, XK_Return, cr},
+
+    {XK_Insert, XK_Insert, KeyIns},
+    {XK_Delete, XK_Delete, KeyDel},
+    {XK_Home, XK_Home, KeyHome},
+    {XK_End, XK_End, KeyEnd},
+    {XK_Page_Up, XK_Page_Up, KeyPageUp},
+    {XK_Page_Down, XK_Page_Down, KeyPageDown},
+
+    {XK_F1, XK_F12, KeyF1},
+    {XK_Left, XK_Left, KeyLeft},
+    {XK_Right, XK_Right, KeyRight},
+    {XK_Up, XK_Up, KeyUp},
+    {XK_Down, XK_Down, KeyDown},
+
+    {-1, -1, -1}
+  };
+
+bool EventPollKey (_Event *Event, XKeyEvent *XKeyEvent, int *ShiftState)
+  {
+    KeySym XKey;
+    _TranslateTable *t;
+    int Res;
+    int Sh;
+    char St [64];
+    //
+    XLookupString (XKeyEvent, St, sizeof (St), &XKey, NULL);
+    Res = XKey;
+    t = XKeyTable;
+    while (true)
+      {
+        if (t->XK0 < 0)   // End of table
+          {
+            if (XKey >= 0x80)   // special printable character (UNICODE)
+              Res = KeyUNICODE;
+            break;
+          }
+        if (XKey >= t->XK0 && XKey <= t->XK1)
+          {
+            if (t->Key >= 0x100)   // shift key
+              {
+                if (XKeyEvent->type == KeyPress)
+                  *ShiftState |= t->Key;
+                else   // Up
+                  *ShiftState &= ~t->Key;
+                Res = 0;
+                break;
+              }
+            Res = t->Key + XKey - t->XK0;
+            break;
+          }
+        t++;
+      }
+    if (Res == KeyUNICODE)
+      Event->UTF = xkb_keysym_to_utf32 (XKey);
+    else   // normal ASCII+ character.  Add/Apply Shift bits.
+      {
+        Sh = *ShiftState;
+        if (Res)
+          if (Res < 0x80)   // Normal character
+            {
+              if (Res >= 0x40)   // Alpha+ character
+                {
+                  if (Sh & KeyAlt)
+                    Res = UpCase (Res);
+                  else
+                    {
+                      if (Sh & KeyCntl)
+                        Res &= 0x1F;
+                      Sh = 0;
+                    }
+                }
+            }
+        Res |= Sh;
+      }
+    Event->Key = Res;
+    /*//####
+    if (XKeyEvent->type == KeyPress)
+      {
+        char *s = St;
+        StrCat (&s, "X: EventPoll:KeyPress keycode=");
+        NumToHex (&s, XKeyEvent->keycode);
+        StrCat (&s, " xk=");
+        NumToHex (&s, XKey);
+        StrCat (&s, " Key=");
+        NumToHex (&s, Event->Key);
+        //StrCat (&s, " Shift=");
+        //NumToHex (&s, ShiftState);
+        StrCat (&s, " UTF=");
+        NumToHex (&s, Event->UTF);
+        *s = 0;
+        DebugAdd (St);
+      }*/
     return true;
   }
 
-void RenderPresent (_Window *Window, byte Alpha)
+bool EventPollClipboard (XEvent *e, _Event *Event)
   {
-    __Window *Window_;
+    XSelectionRequestEvent request;
+    XSelectionEvent sendEvent;
+    XSelectionEvent selection;
+    Atom possibleTargets [] = {aTARGETS, aUTF8, XA_STRING};
+    Atom actualType;
+    int actualFormat;
+    unsigned char *data;
+    unsigned long Count;
     //
-    Window_ = (__Window *) Window;
-    if (Alpha != 0xFF)
-      ApplyAlpha (Window, Window_->XWindow, Window_->SizeX, Window_->SizeY, Alpha);
-  }
-
-void SetRenderDrawColor (_Window *Window, int Colour)//, byte Alpha = 0xFF)
-  {
-    __Window *Window_;
-    int Col;
-    //
-    Window_ = (__Window *) Window;
-    Col = ColourToXColour (Colour);//, Alpha);
-    if (Col != TargetColour)
+    if (e->type == SelectionRequest)
       {
-        //@@@@XSetForeground (XDisplay, RenderTargetTexture->gc, Col);
-        XSetForeground (XDisplay, Window_->WinGCCopy, Col);
-        TargetColour = Col;
-      }
-  }
-
-void RenderDrawPoint (_Window *Window, int Colour, int x, int y)//, byte Alpha = 0xFF)
-  {
-    __Window *Window_;
-    //
-    Window_ = (__Window *) Window;
-    SetRenderDrawColor (Window, Colour);//, Alpha);
-    //@@@@XDrawPoint (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, x, y);
-    XDrawPoint (XDisplay, RenderTargetTexture->Image, Window_->WinGCCopy, x, y);
-    if (RenderTargetTexture->Mask)
-      //@@@@XDrawPoint (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, x, y);
-      {
-        XSetForeground (XDisplay, Window_->WinGCOr, 0xFFFFFF);
-        XDrawPoint (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr, x, y);
-      }
-  }
-
-void RenderDrawLine (_Window *Window, int Colour, int x1, int y1, int x2, int y2)
-  {
-    __Window *Window_;
-    //
-    Window_ = (__Window *) Window;
-    if (x1 == x2 && y1 == y2)
-      RenderDrawPoint (Window, Colour, x1, y1);//, 0xFF);
-    else
-      {
-        SetRenderDrawColor (Window, Colour);
-        //@@@@XDrawLine (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, x1, y1, x2, y2);
-        XDrawLine (XDisplay, RenderTargetTexture->Image, Window_->WinGCCopy, x1, y1, x2, y2);
-        if (RenderTargetTexture->Mask)
-          //@@@@XDrawLine (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, x1, y1, x2, y2);
+        request = e->xselectionrequest;
+        //DebugAddS ("Selection Request", XGetAtomName (XDisplay, request.target)); free XGetAtomName result w XFree()
+        if (XGetSelectionOwner (XDisplay, aCLIPBOARD) == WindowMain && request.property != None)
           {
-            XSetForeground (XDisplay, Window_->WinGCOr, 0xFFFFFF);
-            XDrawLine (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr, x1, y1, x2, y2);
+            if (request.target == aTARGETS)
+              XChangeProperty (request.display, request.requestor, request.property, XA_ATOM, 32, PropModeReplace,
+                (unsigned char*) possibleTargets, SIZEARRAY (possibleTargets));
+            else if (request.target == aUTF8 || request.target == XA_STRING)
+              XChangeProperty (request.display, request.requestor, request.property,
+                request.target, 8, PropModeReplace, (const byte *) ClipboardData, StrLen (ClipboardData));
+            else   // unsupported Target
+              request.property = None;
+            // Send the Selection Notification
+            sendEvent.type = SelectionNotify;
+            sendEvent.serial = request.serial;
+            sendEvent.send_event = request.send_event;
+            sendEvent.display = request.display;
+            sendEvent.requestor = request.requestor;
+            sendEvent.selection = request.selection;
+            sendEvent.target = request.target;
+            sendEvent.property = request.property;
+            sendEvent.time = request.time;
+            XSendEvent (XDisplay, request.requestor, False, NoEventMask, (XEvent*) &sendEvent);
           }
       }
-  }
-
-void RenderFillRect (_Window *Window, _Rect Rect, int Colour)
-  {
-    __Window *Window_;
-    //
-    Window_ = (__Window *) Window;
-    SetRenderDrawColor (Window, Colour);
-    //@@@@XFillRectangle (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, Rect.x, Rect.y, Rect.Width, Rect.Height);
-    XFillRectangle (XDisplay, RenderTargetTexture->Image, Window_->WinGCCopy, Rect.x, Rect.y, Rect.Width, Rect.Height);
-    if (RenderTargetTexture->Mask)
-      //@@@@XFillRectangle (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, Rect.x, Rect.y, Rect.Width, Rect.Height);
-      XFillRectangle (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr, Rect.x, Rect.y, Rect.Width, Rect.Height);
-  }
-
-void RenderFillTransparent (_Window *Window)
-  {
-    __Window *Window_;
-    //
-    Window_ = (__Window *) Window;
-    if (RenderTargetTexture->Mask == 0)   // no Mask so make one
-      RenderTargetTexture->Mask = XCreatePixmap (XDisplay, Window_->XWindow, RenderTargetTexture->Width, RenderTargetTexture->Height, Window_->XDepth);
-    //@@@@if (RenderTargetTexture->gcMask == NULL)   // no GC so make one
-    //@@  RenderTargetTexture->gcMask = XCreateGC (XDisplay, RenderTargetTexture->Mask, 0, NULL);
-    // Reset the Mask to Black, but ready for White
-    //@@@@XSetForeground (XDisplay, RenderTargetTexture->gcMask, 0x000000);   // Fill Mask with Black
-    XSetForeground (XDisplay, Window_->WinGCCopy, 0x000000);   // Fill Mask with Black
-    //@@@@XFillRectangle (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask, 0, 0, RenderTargetTexture->Width, RenderTargetTexture->Height);
-    XFillRectangle (XDisplay, RenderTargetTexture->Mask, Window_->WinGCCopy, 0, 0, RenderTargetTexture->Width, RenderTargetTexture->Height);
-    //@@@@XSetForeground (XDisplay, RenderTargetTexture->gcMask, 0xFFFFFFFF);   // Restore White
-    //@@@@XSetForeground (XDisplay, Window_->WinGCMask, 0xFFFFFFFF);   // Restore White
-  }
+    else if (e->type == SelectionNotify)
+      {
+        DebugAdd ("Selection Notify");
+        selection = e->xselection;
+        //if (selection.property != None)
+          {
+            unsigned long int restail;
+            if (XGetWindowProperty (XDisplay, ClipboardRequestWindow, aXSEL_DATA, 0, IntMax / 4, False, AnyPropertyType,
+              &actualType, &actualFormat, &Count, &restail, &data) == Success)
+              {
+                if (actualType == aUTF8 || request.target == XA_STRING)
+                  {
+                    StrAssign (&ClipboardData, StrMake ((char *) data, Count));
+                    Event->Type = etClipboard;
+                  }
+                XFree (data);
+              }
+          }
+      }
+    else
+      return false;
+    return true;
+	}
 
 void EventPoll (_Event *Event)
   {
-    //__Window *Window_;
-    XEvent e;
-    //int Len;
-    KeySym ks;
-    char s [16];
     static int ShiftState = 0;
-    int ShiftState_;
+    XEvent e;
     //
     Event->Type = etNone;
     while (XPending (XDisplay) > 0 && Event->Type == etNone)
       {
+        e = {0};
         XNextEvent (XDisplay, &e);
         Event->WindowID = (_WindowID) e.xany.window;   // same as XWindow
         //
-        //#define DebugShowXEvents
-        #ifdef DebugShowXEvents
-        DebugAddInt ("XEvent: ", e.type);
-        #endif // DebugShowXEvents
+        //DebugAddInt ("XEvent: ", e.type);
         if (e.type == Expose)
           Event->Type = etWindowRedraw;
         else if (e.type == ConfigureNotify)
@@ -792,75 +817,54 @@ void EventPoll (_Event *Event)
             Event->Type = etWindowResize;
             Event->X = e.xconfigure.width;
             Event->Y = e.xconfigure.height;
+            //DebugAddP ("Win Resize", {Event->X, Event->Y}); //####
           }
         else if (e.type == ClientMessage)   // Close Window?
           {
-            //if (StrSame (XGetAtomName (XDisplay, e.xclient.message_type), "WM_PROTOCOLS"))   // makes no difference
-            if (e.xclient.data.l [0] == wm_delete_window)
+            if (e.xclient.data.l [0] == aDeleteWindow)
               Event->Type = etWindowClose;
           }
-        else if (e.type == KeyPress || e.type == KeyRelease)
-          {
-            /*Len =*/ XLookupString (&e.xkey, s, sizeof (s), &ks, NULL);
-            //if (Len != 1)  When Shift/Alt/Cntrl pressed, Len == 0
-            //  DebugAdd ("X: EventPoll: Len != 1");
-            ShiftState_ = 0;
-            if (ks == XK_Shift_L || ks == XK_Shift_R)
-              ShiftState_ = KeyShift;
-            else if (ks == XK_Control_L || ks == XK_Control_R)
-              ShiftState_ = KeyCntl;
-            else if (ks == XK_Alt_L || ks == XK_Alt_R)
-              ShiftState_ = KeyAlt;
-            else if (ks == XK_Meta_L || ks == XK_Meta_R)
-              ShiftState_ = KeyShift | KeyAlt;
-            if (ShiftState_)
-              {
-                Event->Key = ShiftState ^ ShiftState_;
-                if (e.type == KeyPress)
-                  ShiftState |= ShiftState_;
-                else
-                  ShiftState &= ~ShiftState_;
-              }
-            else
-              {
-                Event->Key = XkeysymToChar (ks);
-                if (Event->Key >= 0x80)
-                  Event->Key |= ShiftState;
-                else
-                  {
-                    if (Event->Key >= '@')   // "Alpha" keys
-                      if (ShiftState & KeyAlt)   // Alt alpha keys are always uppercase
-                        Event->Key = (Event->Key & ~0x20) | ShiftState;
-                      else if (ShiftState & KeyCntl)   // Control alphas
-                        Event->Key &= 0x1F;
-                      else if (ShiftState & KeyShift)
-                        Event->Key &= ~0x20;
-                    else
-                      Event->Key |= ShiftState;
-                  }
-              }
-            if (e.type == KeyPress)
-              Event->Type = etKeyDown;
-            else
-              Event->Type = etKeyUp;
-          }
-        else if (e.type == ButtonPress || e.type == ButtonRelease)
-          {
-            if (e.type == ButtonPress)
-              Event->Type = etMouseDown;
-            else
-              Event->Type = etMouseUp;
-            Event->Key = e.xbutton.button;
-            Event->X = e.xbutton.x;
-            Event->Y = e.xbutton.y;
-          }
-        else if (e.type == MotionNotify)
-          {
-            Event->Type = etMouseMove;
-            Event->X = e.xmotion.x;
-            Event->Y = e.xmotion.y;
-            //DebugAddP ("Mouse: ", {Event->X, Event->Y}); // only gives points in a window
-          }
+        else if (!EventPollClipboard (&e, Event))
+          if (e.type == KeyPress || e.type == KeyRelease)
+            {
+              EventPollKey (Event, &e.xkey, &ShiftState);
+              // Alternative method
+              //XLookupString (&e.xkey, St, sizeof (St), &ks, NULL);
+              //Event->Key = KeyEventToKey (&Event, &e.type == KeyPress, ks, &ShiftState);
+              //Event->UTF = xkb_keysym_to_utf32 (ks); // xkb_keysym_to_utf32 (ks);
+              //ks = e.xkey.keycode;
+              //Len = XkbTranslateKeySym (XDisplay, &ks, 0, s, sizeof (s), NULL);
+              //Len = XmbLookupString (0, &e.xkey, s, sizeof (s), &ks, NULL);
+              /*s [Len] = 0;
+              if (e.type == KeyPress)  // When Shift/Alt/Cntrl pressed, Len == 0
+                {
+                  DebugAddInt ("X: EventPoll: XLookupString Len", Len);
+                  DebugAddS ("X: EventPoll: XLookupString Buffer", s);
+                  DebugAddHex ("X: EventPoll: XLookupString KeySym", ks);
+                }*/
+              //Event->Key = LookupKeyCode (e.type == KeyPress, e.xkey.keycode, &ShiftState);
+              if (e.type == KeyPress)
+                Event->Type = etKeyDown;
+              else
+                Event->Type = etKeyUp;
+            }
+          else if (e.type == ButtonPress || e.type == ButtonRelease)
+            {
+              if (e.type == ButtonPress)
+                Event->Type = etMouseDown;
+              else
+                Event->Type = etMouseUp;
+              Event->Key = e.xbutton.button;
+              Event->X = e.xbutton.x;
+              Event->Y = e.xbutton.y;
+            }
+          else if (e.type == MotionNotify)
+            {
+              Event->Type = etMouseMove;
+              Event->X = e.xmotion.x;
+              Event->Y = e.xmotion.y;
+              //DebugAddP ("Mouse: ", {Event->X, Event->Y}); // only gives points in a window
+            }
       }
     Event->ShiftState = ShiftState;
   }
@@ -872,283 +876,22 @@ bool WindowIDMatch (_WindowID WindowID, _Window *Window_)
 
 ////////////////////////////////////////////////////////////////////////////
 //
-// Texture Functions
-
-bool RenderTexture (_Window *Window, _Texture *Texture, _Rect RecSource, int DestX, int DestY, byte AlphaOffset)
-  {
-    __Window *Window_;
-    __Texture *Texture_;
-    //
-    Window_ = (__Window *) Window;
-    Texture_ = (__Texture *) Texture;
-    if (Texture)
-      return CopyArea (Window_, Texture_->Image, RenderTargetTexture->Image,
-                       //@@@@Texture_->Mask, RenderTargetTexture->Mask, RenderTargetTexture->gc,
-                       Texture_->Mask, RenderTargetTexture->Mask,
-                       RecSource.x, RecSource.y, RecSource.Width, RecSource.Height, DestX, DestY);
-    return false;
-  }
-
-
-_Texture *TextureCreate (_Window *Window, int Width, int Height)
-  {
-    __Window *Window_;
-    __Texture *Texture;
-    //
-    // Allocate and initialize
-    Texture = NULL;
-    #ifdef TexturesEnabled
-    Window_ = (__Window *) Window;
-    Texture = (__Texture *) malloc (sizeof (__Texture));
-    Texture->Width = Width;
-    Texture->Height = Height;
-    Texture->Image = XCreatePixmap (XDisplay, Window_->XWindow, Width, Height, Window_->XDepth);
-    //@@@@Texture->gc = XCreateGC (XDisplay, Texture->Image, 0, NULL);
-    Texture->Mask = 0;
-    #endif // TexturesEnabled
-    return Texture;
-  }
-
-void TextureDestroy (_Window *Window, _Texture *Texture)
-  {
-    __Texture *Texture_;
-    //
-    if (Texture)
-      {
-        Texture_ = (__Texture *) Texture;
-        if (Texture_->Image)
-          XFreePixmap (XDisplay, Texture_->Image);
-        if (Texture_->Mask)
-          XFreePixmap (XDisplay, Texture_->Mask);
-        free (Texture_);
-      }
-  }
-
-_Bitmap *BitmapCreate (_Window *Window, int Width, int Height)
-  {
-    __Window *Window_;
-    int ImgDataSize;
-    byte *ImgData;
-    //
-    Window_ = (__Window *) Window;
-    ImgDataSize = (Width + 1) * (Height + 1) * 4 + 8;
-    ImgData = (byte *) malloc (ImgDataSize);
-    return (_Bitmap *) XCreateImage (XDisplay, Window_->XVisual, Window_->XDepth, ZPixmap, 0, (char *) ImgData, Width, Height, 8, 0);
-  }
-
-void BitmapDestroy (_Bitmap *Bitmap)
-  {
-    if (Bitmap)
-      XDestroyImage ((XImage *) Bitmap);
-  }
-
-bool BitmapGetSize (_Bitmap *Bitmap, int *Width, int *Height)
-  {
-    if (Bitmap)
-      {
-        if (Width)
-          *Width = ((XImage *) Bitmap)->width;
-        if (Height)
-          *Height = ((XImage *) Bitmap)->height;
-        return true;
-      }
-    return false;
-  }
-
-int BitmapGetPixel (_Bitmap *Bitmap, int x, int y)
-  {
-    return XColourToColour (XGetPixel ((XImage *) Bitmap, x, y));
-  }
-
-bool BitmapSetPixel (_Bitmap *Bitmap, int x, int y, int Colour)
-  {
-    if (Bitmap)
-      {
-        XPutPixel ((XImage *) Bitmap, x, y, ColourToXColour (Colour));
-        return true;
-      }
-    return false;
-  }
-
-extern int Time1, Time2, Time3;
-
-bool RenderBitmap (__Window *Window, XImage *Img, _Rect RecSource, int x, int y, int ColTransparent)
-  {
-    __Window *Window_;
-    XImage *Img_, *ImgMask;
-    int x1, y1;
-    int Pixel;
-    //
-    Window_ = (__Window *) Window;
-    if (Img)
-      if ((RecSource.Width > 0) && (RecSource.Height > 0))
-        {
-          int Tick1 = ClockuS ();//####
-          // If Transparent, create a transparency Mask
-          if (ColTransparent >= 0)
-            {
-              ColTransparent = ColourToXColour (ColTransparent);
-              Img_ = (XImage *) BitmapCreate (Window, RecSource.Width, RecSource.Height);
-              int Tick2 = ClockuS ();//####
-              ImgMask = (XImage *) BitmapCreate (Window, RecSource.Width, RecSource.Height);
-              for (y1 = 0; y1 < RecSource.Height; y1++)
-                for (x1 = 0; x1 < RecSource.Width; x1++)
-                  {
-                    Pixel = XGetPixel (Img, RecSource.x + x1, RecSource.y + y1);
-                    if (Pixel == ColTransparent)
-                      {
-                        XPutPixel (Img_, x1, y1, 0x000000);
-                        XPutPixel (ImgMask, x1, y1, 0x000000);
-                      }
-                    else
-                      {
-                        XPutPixel (Img_, x1, y1, Pixel);
-                        XPutPixel (ImgMask, x1, y1, 0xFFFFFF);
-                      }
-                  }
-              int Tick3 = ClockuS (); //####
-              Time2 += Tick3 -Tick2;//####
-              // Now put on "screen"
-              // Draw the unmasked bits in Target
-              // Clear effected pixels in Dest (using AND NOT)
-              XPutImage (XDisplay, RenderTargetTexture->Image, Window_->WinGCAndInvert, ImgMask,//
-                         0, 0, x, y, RecSource.Width, RecSource.Height);
-              // Copy new coloured Mask into Dest (using OR)
-              XPutImage (XDisplay, RenderTargetTexture->Image, Window_->WinGCOr, Img_,//
-                         0, 0, x, y, RecSource.Width, RecSource.Height);
-              // Modify DestMask (using OR)
-              if (RenderTargetTexture->Mask && ImgMask)
-                XPutImage (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr, ImgMask,//
-                           0, 0, x, y, RecSource.Width, RecSource.Height);
-              Time3 += ClockuS () - Tick3; //####
-              // free stuff
-              BitmapDestroy (Img_);
-              BitmapDestroy (ImgMask);
-            }
-          else
-            {
-              // Put on "screen"
-              int Tick3 = ClockuS ();//####
-              //SetGCFunction (Window, RenderTargetTexture->gc, GXcopy);  // not needed
-              //@@@@XPutImage (XDisplay, RenderTargetTexture->Image, RenderTargetTexture->gc, Img,
-              XPutImage (XDisplay, RenderTargetTexture->Image, Window_->WinGCCopy, Img,
-                         RecSource.x, RecSource.y, x, y, RecSource.Width, RecSource.Height);
-              // Modify DestMask (using OR)
-              if (RenderTargetTexture->Mask)
-                //@@@@XFillRectangle (XDisplay, RenderTargetTexture->Mask, RenderTargetTexture->gcMask,
-                XFillRectangle (XDisplay, RenderTargetTexture->Mask, Window_->WinGCOr,
-                                x, y, RecSource.Width, RecSource.Height);
-              Time3 += ClockuS () - Tick3;//####
-            }
-          Time1 += ClockuS () - Tick1;//####
-          return true;
-        }
-    return false;
-  }
-
-bool RenderBitmap (_Window *Window, _Bitmap *Bitmap, _Rect RecSource, _Rect RecDest, int ColTransparent)
-  {
-    __Window *Window_;
-    XImage *Img1, *Img2;
-    int xs, ys, xd, yd;
-    int a;
-    bool get, put;
-    int pixel;
-    bool Res;
-    //
-    Res = false;
-    Window_ = (__Window *) Window;
-    Img1 = (XImage *) Bitmap;
-    Img2 = NULL;
-    if (Bitmap)
-      if ((RecDest.Width > 0) && (RecDest.Height > 0))
-        {
-          if (RecSource.Width == RecDest.Width && RecSource.Height == RecDest.Height)   // Same size
-            Res = RenderBitmap (Window_, Img1, RecSource, RecDest.x, RecDest.y, ColTransparent);
-          else   // Bitmap needs resizing
-            {
-              // Generate Scaled Image
-              Img2 = (XImage *) BitmapCreate (Window, RecDest.Width, RecDest.Height);
-              xs = ys = 0;
-              xd = yd = 0;
-              get = put = true;
-              while (true)
-                {
-                  if (get & put)
-                    {
-                      get = false;
-                      pixel = XGetPixel (Img1, RecSource.x + xs, RecSource.y + ys);
-                    }
-                  if (put)
-                    {
-                      put = false;
-                      XPutPixel (Img2, xd, yd, pixel);
-                    }
-                  a = (xs+1) * RecDest.Width - (xd+1) * RecSource.Width;
-                  if (a <= 0)
-                    {
-                      xs++;
-                      get = true;
-                    }
-                  if (a >= 0)
-                    {
-                      xd++;
-                      put = true;
-                    }
-                  if (xs >= RecSource.Width && get)
-                    {
-                      get = put = true;
-                      xs = 0;
-                      xd = 0;
-                      a = (ys+1) * RecDest.Height - (yd+1) * RecSource.Height;
-                      if (a <= 0)
-                        {
-                          ys++;
-                          get = true;
-                        }
-                      if (a >= 0)
-                        {
-                          yd++;
-                          put = true;
-                        }
-                      if (ys >= RecSource.Height && get)
-                        break;
-                    }
-                }
-              // Now put on "screen"
-              Res = RenderBitmap (Window_, Img2, {0, 0, RecDest.Width, RecDest.Height}, RecDest.x, RecDest.y, ColTransparent);
-            }
-          // Free stuff
-          if (Img2)
-            BitmapDestroy (Img2);
-        }
-    return Res;
-  }
-
-_Bitmap* BitmapFromTexture (_Window *Window, _Texture *Texture, int Width, int Height)
-  {
-    __Texture *Texture_;
-    //
-    Texture_ = (__Texture *) Texture;
-    if (Texture_ && Texture_->Image)
-      return (_Bitmap *) XGetImage (XDisplay, Texture_->Image, 0, 0, Width, Height, 0xFFFFFF, ZPixmap);
-    return NULL;
-  }
-
-
-////////////////////////////////////////////////////////////////////////////
-//
 // Clipboard
 
-void ClipboardFilename (char *Filename)
+/*void ClipboardFilename (char *Filename)
   {
     StrPathHome (&Filename, ".clipboard");
     *Filename = 0;
-  }
+  }*/
 
-char* ClipboardGet (void)
+void ClipboardGet (_Window *Window_)   // Initiates a clipboard request. Wait for Event->Type == etClipoard
   {
-    char Filename [MaxPath];
+    __Window *Window;
+    //
+    Window = (__Window *) Window_;
+    ClipboardRequestWindow = Window->XWindow;
+    XConvertSelection (XDisplay, aCLIPBOARD, aUTF8, aXSEL_DATA, Window->XWindow, CurrentTime);
+    /*char Filename [MaxPath];
     char *Res;
     int f;
     int sz;
@@ -1164,11 +907,15 @@ char* ClipboardGet (void)
         FileClose (f);
         return Res;
       }
-    return nullptr;
+    return nullptr;*/
   }
 
-bool ClipboardSet (char *Text)
+bool ClipboardSet (_Window *Window_, char *Text)
   {
+    StrAssignCopy (&ClipboardData, Text);
+    XSetSelectionOwner (XDisplay, aCLIPBOARD, WindowMain, CurrentTime);
+    return true;
+    /*
     char Filename [MaxPath];
     int f;
     int sz;
@@ -1183,6 +930,102 @@ bool ClipboardSet (char *Text)
         return true;
       }
     return false;
+    */
+  }
+
+
+////////////////////////////////////////////////////////////////////////////
+//
+// Bitmap Functions
+
+_Bitmap *BitmapCreate (_Window *Window, int Width, int Height)
+  {
+    __Window *Window_;
+    __Bitmap *Bitmap;
+    //
+    Window_ = (__Window *) Window;
+    Bitmap = (__Bitmap *) malloc (sizeof (__Bitmap));
+    Bitmap->Width = Width;
+    Bitmap->Height = Height;
+    Bitmap->ImageDataSize = (Width + 1) * (Height + 1) * 4 + 8;
+    Bitmap->ImageData = (int *) malloc (Bitmap->ImageDataSize);
+    Bitmap->Image = XCreateImage (XDisplay, Window_->XVisual, Window_->XDepth, ZPixmap, 0, (char *) Bitmap->ImageData, Width, Height, 32, 0);
+    Bitmap->Alpha = (byte *) malloc (Width * Height);
+    return (_Bitmap *) Bitmap;
+  }
+
+void BitmapDestroy (_Bitmap *Bitmap_)
+  {
+    __Bitmap *Bitmap;
+    //
+    if (Bitmap_)
+      {
+        Bitmap = (__Bitmap *) Bitmap_;
+        if (Bitmap->Image)
+          XDestroyImage (Bitmap->Image);
+        if (Bitmap->Alpha)
+          free (Bitmap->Alpha);
+        free (Bitmap_);
+      }
+  }
+
+bool BitmapGetSize (_Bitmap *Bitmap_, int *Width, int *Height)
+  {
+    __Bitmap *Bitmap;
+    //
+    if (Bitmap_)
+      {
+        Bitmap = (__Bitmap *) Bitmap_;
+        if (Width)
+          *Width = Bitmap->Width;
+        if (Height)
+          *Height = Bitmap->Height;
+        return true;
+      }
+    return false;
+  }
+
+int BitmapGetPixel (_Bitmap *Bitmap_, int x, int y)
+  {
+    __Bitmap *Bitmap;
+    //
+    Bitmap = (__Bitmap *) Bitmap_;
+    if (Bitmap)
+      {
+        if (x >= 0 && y >= 0 && x < Bitmap->Width && y < Bitmap->Height)
+          return XColourToColour (XGetPixel (Bitmap->Image, x, y) | Bitmap->Alpha [y * Bitmap->Width + x] << 24);
+        //DebugAddP ("BitmapGetPixel invalid", {x, y});
+      }
+    return 0;
+  }
+
+bool BitmapSetPixel (_Bitmap *Bitmap_, int x, int y, int Colour)
+  {
+    __Bitmap *Bitmap;
+    _Colour c;
+    //
+    Bitmap = (__Bitmap *) Bitmap_;
+    if (Bitmap)
+      if (x >= 0 && y >= 0 && x < Bitmap->Width && y < Bitmap->Height)
+        {
+          XPutPixel (Bitmap->Image, x, y, ColourToXColour (Colour) & 0xFFFFFF);
+          c.RGBA =  Colour;
+          Bitmap->Alpha [y * Bitmap->Width + x] = c.Prime [3];
+          return true;
+        }
+      //else
+      //  DebugAddP ("BitmapSetPixel invalid", {x, y});
+    return false;
+  }
+
+void BitmapClear (_Bitmap *Bitmap_)
+  {
+    __Bitmap *Bitmap;
+    //
+    Bitmap = (__Bitmap *) Bitmap_;
+    if (Bitmap)
+      if (Bitmap->Alpha)
+        memset (Bitmap->Alpha, 0, Bitmap->Width * Bitmap->Height);
   }
 
 
@@ -1203,13 +1046,12 @@ void* ThreadWrapper (void *Params)
 bool StartThread (_ThreadFunction ThreadFunction, void *Params)
   {
     pthread_t Thread;
-    //pthread_attr_t ThreadAttr;
     int err;
     char St [64], *s;
     //
     Thread = 0;
     ThreadFunction_ = ThreadFunction;
-    err = pthread_create (&Thread, NULL, ThreadWrapper, Params);//ThreadFunction Param
+    err = pthread_create (&Thread, NULL /*&ThreadAttr*/, ThreadWrapper, Params);
     s = St;
     if (err)
       {
@@ -1223,6 +1065,7 @@ bool StartThread (_ThreadFunction ThreadFunction, void *Params)
       }
     *s = 0;
     DebugAdd (St);
+    pthread_detach (Thread);   // This frees up remaining resources for Thread
     return err == 0;
   }
 
@@ -1231,7 +1074,12 @@ bool StartThread (_ThreadFunction ThreadFunction, void *Params)
 //
 // Main Programme
 
-int main (int argc, char* args [])
+int main (int argc, char* argv [])
   {
-    return main_ (argc, args);
+    return main_ (argc, argv);
+  }
+
+void Beep (void)
+  {
+    XBell (XDisplay, 100);
   }

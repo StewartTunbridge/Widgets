@@ -12,15 +12,20 @@
 
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <utime.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+
+#ifdef _Windows
+#include <winsock.h>
+#else
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#endif
 
 #include <string.h>
 

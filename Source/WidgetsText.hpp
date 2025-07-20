@@ -18,15 +18,14 @@ extern bool ForceMonochrome;
 #define fsUnderline 0x04
 #define fsOutline 0x08
 #define fsShadow 0x10
-#define fsFillBG 0x20   // Fill character rectangel with background colour
-#define fsRotate 0x40   // Rotate 90 deg CCW
-#define fsNoGrayscale 0x80
+#define fsRotate 0x20   // Rotate 90 deg CCW
+#define fsNoGrayscale 0x40
 
 typedef struct
   {
     byte Style;
     int Colour;
-    int ColourBG;   // used for "Blending" & Filling (when Style == fsFillBG)
+    int ColourBG;   // used for Selected Text
     // private
     void *Typeface;
     int Size;
@@ -34,12 +33,14 @@ typedef struct
     int YOffset;
   } _Font;
 
+extern _Bitmap *TextTargetBitmap;
+
 typedef bool _TextCallBack (_Window *Window, char **Text, _Font *Font, _Point *Posn, _Point *Size);
 extern _TextCallBack *TextCallBack;
 
 extern char *TextCursor;
 
-extern _Font *FontCreate (char *FontName, int Size, byte Style, int Colour);
+extern _Font *FontCreate (char *Filename, int Size, byte Style);//, int Colour);
 extern void FontDestroy (_Font *Font);
 
 extern _Point TextSize (_Font *Font, char *Text);
