@@ -324,7 +324,7 @@ A dynamic rotating circle of dimming circles to show progress, or just busy
 - Callbacks for line and character effects.
 - _EditPopup: An \_Edit with a popup menu for Cut, Copy, Paste, Clear
 - _EditPopupDropList: An \_EditPopup with a drop down list
-  - To add an item to the top of the list (if unique) - Call DropListAdd (char *Item, int MaxItems)
+  - To add / move an item to the top of the list - Call DropListAdd (char *Item, int MaxItems)
 
 Making a new Widget
 -------------------
