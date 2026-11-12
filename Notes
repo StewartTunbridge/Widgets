@@ -1,6 +1,7 @@
 THINGS GOING FORWARD
 
-Text: Currently relying on FreeType2 then crunching pixels. I'm thinking of putting text support in the WidgetDriver* so SDL can use its own TTF library.
+TTF Text Rendering: Now using STB library instead of FreeType.
+Image Files: Now using STB library.
+Wayland: Looking at supporting Wayland soon.
 
-Dropping X and Windows and relying on SDL for all. Is that a good way to go? With Wayland on the horizon, should it be supported OR let SDL handle Wayland.
 
